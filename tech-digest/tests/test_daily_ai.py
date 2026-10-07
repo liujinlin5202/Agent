@@ -301,6 +301,15 @@ class TestPickPromptGating(unittest.TestCase):
         self.assertIn("不在禁选之列", prompt)
         self.assertIn("非 AI 话题的同类消息仍然不选", prompt)
 
+    def test_non_tech_article_veto(self):
+        """2026-10-07 用户：「跟技术有什么关系，不要把这种选进来」——
+        模拟演示实锤：罗马游记（少数派 Matrix）在可抓池里，编者按还能用
+        「对架构思维有启发」把它合理化。非技术长文必须硬否决。"""
+        prompt = daily_ai._build_pick_prompt(CANDS)
+        self.assertIn("必须是技术/科技类", prompt)
+        self.assertIn("旅行游记", prompt)
+        self.assertIn("合理化", prompt)
+
 
 class TestTranslationIntact(unittest.TestCase):
     """翻译完整性机械断言：09-18 事故（重译把 9 个 SQL 代码块删光）不能只靠

@@ -192,6 +192,7 @@ class TestPromptValueCriteria(unittest.TestCase):
         self.assertIn("信息价值优先", p)
         self.assertIn("营销稿", p)
         self.assertIn("为什么值得关注", p)
+        self.assertIn("非技术", p)        # 2026-10-07 技术话题闸（同日日报标准）
 
     def test_deep_prompt_value_pick_and_cands(self):
         cands = [{"item": it(title=f"候选条目{i}", url=f"https://x.com/{i}"),
@@ -200,6 +201,7 @@ class TestPromptValueCriteria(unittest.TestCase):
         p = weekly._deep_prompt(cands, "2026-W38")
         self.assertIn("信息价值判断", p)
         self.assertIn("宁缺毋滥", p)
+        self.assertIn("非技术", p)        # 2026-10-07 技术话题闸
         for i in range(weekly.DEEP_CANDS):       # 8 条候选全部给出，AI 自己择优
             self.assertIn(f"候选条目{i}", p)
 
