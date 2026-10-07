@@ -380,7 +380,7 @@ Run:
 ```bash
 python _pod_sync.py pull
 for f in config llm generate retrieve context api; do
-  echo "=== $f.py ==="; diff -u _pod_check/$f.py sse_market_assist/app/$f.py | head -40
+  echo "=== $f.py ==="; diff -u sse_market_assist/_pod_check/$f.py sse_market_assist/app/$f.py | head -40
 done
 ```
 Expected: diff 只包含本次改动（config/llm）与措辞订正（generate/retrieve/context/api）。**若出现意外差异，停下来人工核对，不要 push。**

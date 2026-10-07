@@ -7,24 +7,24 @@
 ## 项目组成
 
 ```
-├── sse_market_assist/     # 站内智能检索 + AI 应答服务（RAG）
+├── sse_market_assist/     # 【AI 回复】站内智能检索 + AI 应答服务（RAG）
 │   ├── app/               #   FastAPI 服务：混合检索（向量+关键词+热度）、LLM 路由、生成、WebSearch 兜底
 │   ├── scripts/           #   索引同步（run_sync watch）、冒烟测试、预生成
 │   ├── scripts/ops/       #   服务器侧运维脚本（服务重启、同步守护）
 │   ├── deploy/            #   systemd 服务单元
-│   └── tests/             #   pytest 单测
-├── _pod_check/            # 上述服务在 K8s pod 内运行的检查副本（本地诊断用）
-├── tech-digest/           # 前沿技术日报/周报自动生成与发布
+│   ├── tests/             #   pytest 单测
+│   ├── _pod_check/        #   同一服务在 K8s pod 内运行版本的检查副本（本地诊断用）
+│   ├── docs/              #   本板块技术文档与 Superpowers 计划/设计稿
+│   └── archive/           #   早期原型（assist mvp）
+├── tech-digest/           # 【自动发帖】前沿技术日报/周报自动生成与发布
 │   ├── app/               #   抓取（HackerNews/GitHub Trending/DevTo/少数派/知乎热/华尔街见闻）、
 │   │                      #   质量闸门（可爬性预取/翻译保全断言/选文标准）、LLM 摘要、集市发布
 │   ├── ops_report/        #   定时运维巡检报告（采集→分析→LLM 建议→邮件）
 │   ├── scripts/           #   部署、诊断、验证脚本
 │   ├── deploy/            #   systemd service+timer（daily 09:15 / star 周六 / weekly 周日）
-│   └── tests/             #   pytest 单测（40+ 文件）
-├── docs/                  # 设计与实现文档
-│   ├── superpowers/       #   各特性的实施计划与设计稿
-│   └── *.md               #   两套系统的技术实现文档与 PRD
-├── archive/prototypes/    # 早期原型（mvp、tech-digest-mvp）
+│   ├── tests/             #   pytest 单测（40+ 文件）
+│   ├── docs/              #   本板块技术文档、PRD 与 Superpowers 计划/设计稿
+│   └── archive/           #   早期原型（tech-digest-mvp、星榜快照）
 └── _archive/              # 本地归档（一次性诊断脚本与抓取产物，不入库，见 .gitignore）
 ```
 
@@ -50,4 +50,4 @@ cd sse_market_assist && python -m pytest tests/ -q
 ## 说明
 
 - `.env`、真实凭据、服务器地址一律不入库（`.gitignore` 已兜底）。
-- `sse_market_assist` 与 `_pod_check` 为同一服务的两个运行位置（宿主机 / K8s pod），改动需双向同步。
+- `sse_market_assist/_pod_check` 是同一服务在 K8s pod 内运行版本的检查副本（与宿主机版本改动需双向同步）。
