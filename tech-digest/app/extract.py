@@ -6,19 +6,34 @@ script/style/nav/footer/aside 等噪声标签，以及评论区/侧栏/订阅框
 （按 id/class 识别，dev.to 的评论区整块嵌在 <article> 里，2026-09-21 实测）
 整块剔除；块级标签归并为段落（\n\n）。超长截断到 EXTRACT_CAP——翻译层再按
 中文预算二次裁剪。
+
+正文级质量网（2026-10-07 sspai 事故）：少数派把页头作者卡/分享面板/页尾
+版权卡整段包进 <article>，且中文全文直发不过翻译层，家具原样进了帖子。
+容器名单按站点枚举永远追不全，故叠加两道文本层兜底——① 短块在邻域窗口内
+聚发 ≥3 次（作者卡重影）；② 已知推广/交互文案模式。都只删非 <pre> 块。
 """
 from __future__ import annotations
 
+import logging
 import re
 from html import unescape
 from html.parser import HTMLParser
+
+log = logging.getLogger("tech-digest.extract")
 
 EXTRACT_CAP = 60_000
 
 _SKIP = {"script", "style", "nav", "footer", "header", "aside", "noscript",
          "form", "button", "svg", "iframe", "select", "template"}
-# id/class 命中即整块跳过的噪声容器（评论区资料卡曾污染全文，见 test_extract）
-_JUNK_ATTR_RE = re.compile(r"comment|sidebar|newsletter|subscribe", re.I)
+# id 只认原始四词：新词在 id 上会误伤标题锚点（claude.dev 实测
+# id="share-the-chart-or-screenshot-itself" 的 H3 曾被整行删掉）
+_JUNK_ID_RE = re.compile(r"comment|sidebar|newsletter|subscribe", re.I)
+# class 命中即整块跳过的噪声容器（评论区资料卡曾污染全文，见 test_extract；
+# sspai 页头/页尾与 freecodecamp banner 广告皆为类名命中——2026-10-07 实测）
+_JUNK_CLASS_RE = re.compile(
+    r"comment|sidebar|newsletter|subscribe|share|footer|popover|promo|banner|"
+    r"copyright|related|recommend|toolbar|breadcrumb|"
+    r"article__important|article__charge", re.I)
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
          "meta", "param", "source", "track", "wbr"}
 _BLOCK = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "pre", "br",
@@ -30,10 +45,26 @@ _META_AUTHOR_RE = re.compile(
 _ARTICLE_RE = re.compile(r"<article\b", re.I)
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
 
+# ---- 正文级质量网阈值（2026-10-07） ----
+_WIDGET_RE = re.compile(
+    r"微信扫码分享|点击下方按钮可复制链接|本文责编|位派友已充电|著作权归作者|"
+    r"未经.{0,8}许可.{0,8}转载|关注少数派小红书|少数派为你呈现")
+_WIDGET_MAX_CHARS = 60   # 只认短块：长段落里出现这些词是正常行文
+_REPEAT_MAX_CHARS = 80   # 重复块只可能是人名/标签类家具，长正文重复不归它管
+_REPEAT_MIN_COUNT = 3
+_REPEAT_WINDOW = 15      # 窗口内聚发才算：芯片标签（PROMPT 跨 23 块）与表格行
+                         # 残片（跨 24 块）是分散重复；家具重影实测都 ≤15（2026-10-07）
+
 
 def _junk_attrs(attrs: list[tuple[str, str | None]]) -> bool:
-    return any(k in ("id", "class") and v and _JUNK_ATTR_RE.search(v)
-               for k, v in attrs)
+    for k, v in attrs:
+        if not v:
+            continue
+        if k == "class" and _JUNK_CLASS_RE.search(v):
+            return True
+        if k == "id" and _JUNK_ID_RE.search(v):
+            return True
+    return False
 
 
 class _TextGrab(HTMLParser):
@@ -95,6 +126,44 @@ def _slice_article(html_text: str) -> str:
     return best if best.strip() else html_text
 
 
+def _spam_texts(blocks: list[str], is_pre: list[bool]) -> set[str]:
+    """邻域窗口内聚发短块（≥3 次）判为家具残影：作者卡/标签墙都是扎堆重复，
+    章节芯片标签是分散重复——只有前者该删（claude.dev PROMPT×6 实测）。"""
+    idx_by_text: dict[str, list[int]] = {}
+    for i, (b, pre) in enumerate(zip(blocks, is_pre)):
+        if pre or len(b) > _REPEAT_MAX_CHARS:
+            continue
+        idx_by_text.setdefault(b, []).append(i)
+    spam: set[str] = set()
+    for text, idxs in idx_by_text.items():
+        if len(idxs) < _REPEAT_MIN_COUNT:
+            continue
+        for j in range(len(idxs) - _REPEAT_MIN_COUNT + 1):
+            if idxs[j + _REPEAT_MIN_COUNT - 1] - idxs[j] <= _REPEAT_WINDOW:
+                spam.add(text)
+                break
+    return spam
+
+
+def _clean_blocks(blocks: list[str], is_pre: list[bool]) -> list[str]:
+    """正文级质量网：剔除聚集重复块与推广/交互模式块，命中必留 WARNING（监督）。"""
+    spam = _spam_texts(blocks, is_pre)
+    out: list[str] = []
+    n_rep = n_widget = 0
+    for b, pre in zip(blocks, is_pre):
+        if not pre:
+            if b in spam:
+                n_rep += 1
+                continue
+            if len(b) <= _WIDGET_MAX_CHARS and _WIDGET_RE.search(b):
+                n_widget += 1
+                continue
+        out.append(b)
+    if n_rep or n_widget:
+        log.warning("正文质量网：剔除聚集重复块 %d 条、推广/交互模式 %d 条", n_rep, n_widget)
+    return out
+
+
 def extract_article(html_text: str) -> dict:
     """HTML → {"text": 段落化纯文本, "author": meta author 或 ""}。
 
@@ -106,15 +175,20 @@ def extract_article(html_text: str) -> dict:
     p.feed(_slice_article(html_text))
     text = unescape("".join(p.parts))
     blocks: list[str] = []
+    is_pre: list[bool] = []
     for i, seg in enumerate(text.split("\x00")):
         if i % 2:                     # 奇数段 = pre 内部
             pre = seg.strip("\n").rstrip()
             if pre.strip():
                 blocks.append(pre)
+                is_pre.append(True)
         else:
             paras = (_WS_RE.sub(" ", ln).strip() for ln in seg.split("\n\n"))
-            blocks.extend(ln for ln in paras if ln)
-    text = "\n\n".join(blocks)[:EXTRACT_CAP]
+            for ln in paras:
+                if ln:
+                    blocks.append(ln)
+                    is_pre.append(False)
+    text = "\n\n".join(_clean_blocks(blocks, is_pre))[:EXTRACT_CAP]
     am = _META_AUTHOR_RE.search(html_text)
     return {"text": text, "author": (am.group(1).strip() if am else "")}
 
