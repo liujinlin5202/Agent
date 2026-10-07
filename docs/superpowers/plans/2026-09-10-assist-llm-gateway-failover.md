@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **网关主通道**：`https://api.<MARKET_DOMAIN>/v1`，模型 `deepseek-v4-flash`，OpenAI 兼容协议。
-- **网关 key**：与本机 cc-switch 里 market-deploy provider 的 `ANTHROPIC_AUTH_TOKEN` 同一把（`sk-6daa…` 开头）。**任何文档、计划、提交中都不得出现明文 key**；服务器 .env 由部署步骤注入。
+- **网关 key**：与本机 cc-switch 里 market-deploy provider 的 `ANTHROPIC_AUTH_TOKEN` 同一把（`sk-****…` 开头）。**任何文档、计划、提交中都不得出现明文 key**；服务器 .env 由部署步骤注入。
 - **不要给网关设 `reasoning_effort`**：实测该网关 deepseek 系模型**拒绝** `reasoning_effort="none"`（HTTP 400 `ModelArts.81001`，仅接受 low/medium/high/xhigh/max）。若将来把主通道换成 `qwen3.8-27b-awq`，则**必须**显式设 `reasoning_effort="none"`，否则思考烧光 token 输出空内容（2026-09-10 实测）。
 - **未采用的模型**：`ling-3.0-flash`（502 上游故障）、`kimi-k2.6`（实测 12.4s，明显慢于 deepseek-v4-flash 的 ~4s）。
 - **生成参数两通道保持一致**：temperature 0.2、max_completion_tokens 1536、timeout 100s、max_retries 0（沿用现网已验证参数，勿改）。
