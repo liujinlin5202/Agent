@@ -32,8 +32,8 @@ _JUNK_ID_RE = re.compile(r"comment|sidebar|newsletter|subscribe", re.I)
 # sspai 页头/页尾与 freecodecamp banner 广告皆为类名命中——2026-10-07 实测）
 _JUNK_CLASS_RE = re.compile(
     r"comment|sidebar|newsletter|subscribe|share|footer|popover|promo|banner|"
-    r"copyright|related|recommend|toolbar|breadcrumb|"
-    r"article__important|article__charge", re.I)
+    r"copyright|related|recommend|toolbar|breadcrumb|author-card|"
+    r"article__important|article__charge|article__header", re.I)
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
          "meta", "param", "source", "track", "wbr"}
 _BLOCK = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "pre", "br",
@@ -48,12 +48,17 @@ _WS_RE = re.compile(r"[ \t\r\f\v]+")
 # ---- 正文级质量网阈值（2026-10-07） ----
 _WIDGET_RE = re.compile(
     r"微信扫码分享|点击下方按钮可复制链接|本文责编|位派友已充电|著作权归作者|"
-    r"未经.{0,8}许可.{0,8}转载|关注少数派小红书|少数派为你呈现")
+    r"未经.{0,8}许可.{0,8}转载|关注少数派小红书|少数派为你呈现|Matrix 首页推荐")
 _WIDGET_MAX_CHARS = 60   # 只认短块：长段落里出现这些词是正常行文
 _REPEAT_MAX_CHARS = 80   # 重复块只可能是人名/标签类家具，长正文重复不归它管
 _REPEAT_MIN_COUNT = 3
 _REPEAT_WINDOW = 15      # 窗口内聚发才算：芯片标签（PROMPT 跨 23 块）与表格行
                          # 残片（跨 24 块）是分散重复；家具重影实测都 ≤15（2026-10-07）
+# 少数派 Matrix 专栏每篇固定的社区声明（实测逐字相同，按前缀删）
+_BOILERPLATE_PREFIXES = ("Matrix 是少数派的写作社区", "文章代表作者个人观点")
+# 少数派把推广行写成 <p>&gt; ...</p> 字面文本——提取后以「> 」开头的块是家具
+# 铁证（真 <blockquote> 不会产生 > 前缀）；限短块防误伤 markdown 教学长段
+_QUOTE_PROMO_MAX = 80
 
 
 def _junk_attrs(attrs: list[tuple[str, str | None]]) -> bool:
@@ -155,7 +160,9 @@ def _clean_blocks(blocks: list[str], is_pre: list[bool]) -> list[str]:
             if b in spam:
                 n_rep += 1
                 continue
-            if len(b) <= _WIDGET_MAX_CHARS and _WIDGET_RE.search(b):
+            if ((len(b) <= _WIDGET_MAX_CHARS and _WIDGET_RE.search(b))
+                    or b.startswith(_BOILERPLATE_PREFIXES)
+                    or (b.startswith("> ") and len(b) <= _QUOTE_PROMO_MAX)):
                 n_widget += 1
                 continue
         out.append(b)

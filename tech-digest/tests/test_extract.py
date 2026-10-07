@@ -317,6 +317,76 @@ class TestBodyQualityGate(unittest.TestCase):
         r = extract_article(html)
         self.assertIn("对写作者也更友好", r["text"])
 
+    def test_literal_quote_promo_dropped(self):
+        """少数派把推广行写成 <p>&gt; ...</p> 字面文本——提取后以「> 」开头的
+        短块是家具铁证（真 <blockquote> 不会产生 > 前缀）。"""
+        html = ("<article><p>正文段落，内容足够长。</p>"
+                "<p>&gt; 守护孩子的天马行空，从零开始美术教育启蒙</p></article>")
+        r = extract_article(html)
+        self.assertNotIn("守护孩子", r["text"])
+
+    def test_blockquote_element_not_confused(self):
+        """真 <blockquote> 引用是正文，提取器本就不输出 > 前缀，不受影响。"""
+        html = ("<article><blockquote><p>被引用的一段话，属于正文内容。</p></blockquote>"
+                "<p>正文段落，内容足够长。</p></article>")
+        r = extract_article(html)
+        self.assertIn("被引用的一段话", r["text"])
+
+
+# sspai Matrix 专栏模板（2026-10-07 实测 post/114845）：页头是另一套类名
+# article__header__*（Matrix精选/日期/阅读时长/标题），社区声明与推广行照旧
+# 嵌在正文容器里——推广行是 <p>&gt; ...字面文本，提取后以「> 」开头。
+SSPAI_MATRIX_FIXTURE = """<html><body>
+<article class="normal-article">
+  <div class="article__header article__section__wrapper">
+    <div class="article__header__content">
+      <h1>罗马：永恒之城，永恒于世</h1>
+      <div class="article__header__meta"><div class="article__header__meta__main">
+        <span class="article__header__tag"><span>Matrix精选</span></span>
+        <span>2026年10月07日</span>
+        <span class="article__header__reading-time">22 分钟阅读</span>
+      </div></div>
+    </div>
+  </div>
+  <div class="article-body"><div class="article__main__wrapper">
+    <div class="article__main__content wangEditor-txt">
+      <p>罗马城的老建筑保存得出奇地好，这是一篇城市漫步记录的开头。</p>
+      <p>Matrix 首页推荐</p>
+      <p>文章代表作者个人观点，少数派仅对标题和排版略作修改。</p>
+      <p>Matrix 是少数派的写作社区，我们主张分享真实的产品体验，有实用价值的经验与思考。我们会不定期挑选 Matrix 最优质的文章，展示来自用户的最真实的体验和思考。</p>
+      <p>&gt; 守护孩子的天马行空，从零开始美术教育启蒙</p>
+    </div>
+  </div></div>
+</article>
+</body></html>"""
+
+
+class TestSspaiMatrixTemplate(unittest.TestCase):
+    """Matrix 专栏页头家具 + 固定社区声明 + 「> 」字面推广行。"""
+
+    def test_matrix_furniture_gone_body_kept(self):
+        r = extract_article(SSPAI_MATRIX_FIXTURE)
+        self.assertIn("罗马城的老建筑保存得出奇地好", r["text"])
+        for junk in ("Matrix精选", "22 分钟阅读", "2026年10月07日",
+                     "Matrix 是少数派的写作社区", "守护孩子的天马行空",
+                     "文章代表作者个人观点", "Matrix 首页推荐",
+                     "罗马：永恒之城"):
+            self.assertNotIn(junk, r["text"])
+
+
+class TestAuthorBylineCard(unittest.TestCase):
+    """freeCodeCamp 等站的 author-card 署名卡（姓名×2 + 简历段）不进正文。"""
+
+    def test_author_card_stripped(self):
+        html = ("<article><section class='author-card'>"
+                "<span class='author-card-name'>Jane Dev</span>"
+                "<p>Engineering Lead with 7+ years of experience.</p></section>"
+                "<p>正文段落，内容足够长可以保留下来。</p></article>")
+        r = extract_article(html)
+        self.assertNotIn("Jane Dev", r["text"])
+        self.assertNotIn("Engineering Lead", r["text"])
+        self.assertIn("正文段落", r["text"])
+
 
 class TestLanguage(unittest.TestCase):
     def test_is_mostly_chinese_true(self):
