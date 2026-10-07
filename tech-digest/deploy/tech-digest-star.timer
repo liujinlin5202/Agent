@@ -1,0 +1,11 @@
+[Unit]
+Description=tech-digest star board timer (Sat 09:25)
+
+[Timer]
+OnCalendar=Sat *-*-* 09:25
+Persistent=true
+RandomizedDelaySec=60
+Unit=tech-digest-star.service
+
+[Install]
+WantedBy=timers.target

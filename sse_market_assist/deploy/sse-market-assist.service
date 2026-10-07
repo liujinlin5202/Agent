@@ -1,0 +1,15 @@
+[Unit]
+Description=SSE Market post-assist service (partition RAG + AI answer)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/market-deploy/sse_market_assist
+ExecStart=/root/market-deploy/sse_market_assist/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

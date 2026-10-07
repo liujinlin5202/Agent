@@ -1,0 +1,12 @@
+[Unit]
+Description=tech-digest Saturday GitHub star board post (v4, full Top15 no collapse)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/market-deploy/agent/tech-digest
+ExecStart=/root/market-deploy/agent/tech-digest/.venv/bin/python main.py star
+# 抓取 + AI 简介 + 发帖；默认 TimeoutStartSec=90s 会杀进程
+TimeoutStartSec=600
+Nice=10

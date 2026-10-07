@@ -1,0 +1,11 @@
+[Unit]
+Description=tech-digest weekly timer (Sun 10:00)
+
+[Timer]
+OnCalendar=Sun *-*-* 10:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=tech-digest-weekly.service
+
+[Install]
+WantedBy=timers.target

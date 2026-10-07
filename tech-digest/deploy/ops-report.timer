@@ -1,0 +1,11 @@
+[Unit]
+Description=ops-report timer（每天 21:30 触发；脚本内 2 天守卫决定是否发送）
+
+[Timer]
+OnCalendar=*-*-* 21:30
+Persistent=true
+RandomizedDelaySec=60
+Unit=ops-report.service
+
+[Install]
+WantedBy=timers.target

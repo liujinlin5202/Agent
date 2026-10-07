@@ -1,0 +1,12 @@
+[Unit]
+Description=tech-digest daily multi-source digest + market publish
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/market-deploy/agent/tech-digest
+ExecStart=/root/market-deploy/agent/tech-digest/.venv/bin/python main.py daily
+# 抓取 ≤90s + AI ≤120s + 发帖；默认 TimeoutStartSec=90s 会杀进程
+TimeoutStartSec=600
+Nice=10

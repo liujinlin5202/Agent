@@ -1,0 +1,12 @@
+[Unit]
+Description=ops-report 运维巡检报告（每两天 21:30 邮件汇总）
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/market-deploy/agent/tech-digest
+ExecStart=/root/market-deploy/agent/tech-digest/.venv/bin/python -m ops_report run
+# 采集（docker logs 48h + ssh pod + 集市库）+ LLM + SMTP 重试（3×60s）
+TimeoutStartSec=600
+Nice=10

@@ -1,0 +1,11 @@
+[Unit]
+Description=tech-digest daily timer (09:15)
+
+[Timer]
+OnCalendar=*-*-* 09:15
+Persistent=true
+RandomizedDelaySec=120
+Unit=tech-digest-daily.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,52 @@
+# 密钥与本地配置（绝不提交）
+.env
+.env.local
+
+# Python 运行时
+__pycache__/
+*.pyc
+.venv/
+.venv_local/
+.pytest_cache/
+
+# Claude Code / Codex 等本地 agent 配置
+.claude/
+.agents/
+.codex/
+.impeccable/
+.superpowers/
+.worktrees/
+AGENTS.md
+
+# 本地归档（一次性诊断/部署脚本、抓取产物——含调试期硬编码的服务器口令/API Key，绝不入库）
+/_archive/
+
+# 集市平台前端源码（本地工作副本，公开仓库不含）
+/_fe/
+
+# 根目录临时脚本与抓取产物（历史遗留兜底；新产物应直接进 _archive/）
+/_*.py
+/_*.sh
+/_*.js
+/_*.html
+/_*.json
+/_*.out
+/_*.txt
+/_*.md
+/_*.downloaded
+/_*.new
+/_fe_md/
+/_preview/
+/_route_backup/
+/_stage/
+*.vsix
+
+# 运行状态与日志
+data/sync_state.json
+*.log
+logs/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
