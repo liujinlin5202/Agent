@@ -77,7 +77,8 @@ class Settings:
         _load_dotenv()
         return cls(
             sse_market_base_url=os.environ.get("SSE_MARKET_BASE_URL", "https://api.<MARKET_DOMAIN>/v1"),
-            sse_market_api_key=os.environ.get("SSE_MARKET_API_KEY", ""),
+            # 秋坞部署：未显式配 SSE_MARKET_API_KEY 时回落平台租户钥匙（LLM 网关 Bearer）
+            sse_market_api_key=os.environ.get("SSE_MARKET_API_KEY") or os.environ.get("QDOCK_API_KEY", ""),
             sse_market_model=os.environ.get("SSE_MARKET_MODEL", "qwen3.8-27b-awq"),
             deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
             deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
