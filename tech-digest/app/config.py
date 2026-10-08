@@ -71,6 +71,14 @@ class Settings:
     # 保留策略
     daily_retain_days: int = 90
     run_log_retain: int = 500
+    # ---- M1 content pool（编辑部计划 §7，全部有默认值；决策留底见
+    # docs/superpowers/plans/2026-10-08-editorial-m1-content-pool.md）----
+    ingest_interval_h: int = 2        # 调度语义值（消费者=秋坞 spec 的 cron/deadline，见 D11）
+    llm_concurrency: int = 1          # M2 LLMWorkerPool 并发度（伪并行开关，本期仅入配置）
+    pool_ttl_days: int = 7            # candidate 过期天数
+    reserved_ttl_days: int = 90       # reserved 保留天数
+    review_threshold: float = 0.7     # M2 终审打回线（本期仅入配置）
+    reserve_score: float = 0.8        # M2 高价值沉淀线（本期仅入配置）
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -100,6 +108,12 @@ class Settings:
             publish_weekend=_get_bool("TECH_DIGEST_WEEKEND_PUBLISH", False),
             daily_retain_days=int(os.environ.get("TECH_DIGEST_RETAIN_DAYS", "90")),
             run_log_retain=int(os.environ.get("TECH_DIGEST_RUNLOG_RETAIN", "500")),
+            ingest_interval_h=int(os.environ.get("TECH_DIGEST_INGEST_INTERVAL_H", "2")),
+            llm_concurrency=int(os.environ.get("TECH_DIGEST_LLM_CONCURRENCY", "1")),
+            pool_ttl_days=int(os.environ.get("TECH_DIGEST_POOL_TTL_DAYS", "7")),
+            reserved_ttl_days=int(os.environ.get("TECH_DIGEST_RESERVED_TTL_DAYS", "90")),
+            review_threshold=float(os.environ.get("TECH_DIGEST_REVIEW_THRESHOLD", "0.7")),
+            reserve_score=float(os.environ.get("TECH_DIGEST_RESERVE_SCORE", "0.8")),
         )
 
     def validate(self, need_ai: bool) -> None:

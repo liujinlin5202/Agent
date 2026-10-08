@@ -43,7 +43,9 @@ class TestChatFallback(unittest.TestCase):
 
         def fake_post(url, **kw):
             calls.append(url)
-            if "market" in url:
+            # 大小写不敏感：默认占位符是 api.<MARKET_DOMAIN>（大写），服务器 .env
+            # 是 api.ssemarket.cn（小写）——断言只区分「主/备域名」，不区分环境
+            if "market" in url.lower():
                 return resp(status=504)
             return resp(json_data={"content": [{"type": "text", "text": "backup"}]})
 
@@ -51,7 +53,7 @@ class TestChatFallback(unittest.TestCase):
             out = llm.chat("ping")
         self.assertEqual(out, "backup")
         self.assertEqual(len(calls), 2)
-        self.assertIn("market", calls[0])
+        self.assertIn("market", calls[0].lower())
         self.assertIn("deepseek.com", calls[1])
 
     def test_deepseek_wire_format(self):

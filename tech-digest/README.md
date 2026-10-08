@@ -11,6 +11,8 @@
 ## 快速使用
 
 ```bash
+.venv/bin/python main.py ingest                 # 每 2h 一班：抓全源入池（零 LLM；编辑部 M1）
+.venv/bin/python main.py ingest --dry-run       # 完整抓取/查重链路但零写池（门禁用）
 .venv/bin/python main.py daily --dry-run        # 日报：渲染落盘，不发帖（校验到 token）
 .venv/bin/python main.py daily --force          # 日报：同日重新生成
 .venv/bin/python main.py weekly --dry-run       # 周报：仅预览五段 + 校验 token（不落库不发帖）
@@ -19,8 +21,12 @@
 ```
 
 - 输出：`output/YYYY-MM-DD-daily.md`、`output/YYYY-Www-weekly.md`、`*-weekly-preview.md`（预览）
-- 状态：`data/tech-digest.db`（daily_snapshot / weekly_report / run_log / meta 期数计数）
+- 状态：`data/tech-digest.db`（daily_snapshot / weekly_report / run_log / meta /
+  pool_items 素材池）
 - 日志：`log/tech-digest.log` + `journalctl -u tech-digest-daily`
+- 编辑部模式（M1，2026-10-08 起）：daily/star 优先从素材池取材，池空自动回退
+  即时抓取；决策与配置见 `docs/EDITORIAL_PLAN.md` 与
+  `docs/superpowers/plans/2026-10-08-editorial-m1-content-pool.md`
 
 ## 调度（systemd timer）
 

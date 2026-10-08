@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """SQLite 存储：schema / 幂等查询 / 保留策略。
 
-表结构见技术文档 §3。所有写操作单连接 + WAL，任务级低频，无并发需求。
+表结构见技术文档 §3。WAL + busy_timeout（2026-10-08 M1）：ingest 与 digest
+两个 pod 可能罕见同碰一个库文件，WAL 允许读写并行、busy_timeout 让后到方
+等锁而非直接报 database is locked。连接工厂 connect_db 是全仓唯一落点
+（PoolStore 同款复用），pragma 不许在别处再写一份。
 """
 from __future__ import annotations
 
@@ -11,6 +14,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from app.config import settings
+
+BUSY_TIMEOUT_MS = 5_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_snapshot (
@@ -55,10 +60,21 @@ CREATE TABLE IF NOT EXISTS post_views (
 """
 
 
-def _conn(db_path: Path) -> sqlite3.Connection:
+def connect_db(db_path: Path) -> sqlite3.Connection:
+    """全仓唯一的 SQLite 连接工厂：Store 与 PoolStore 共用。
+
+    WAL 是库级持久属性（设一次随库生效）；busy_timeout 是连接级，每次开连接
+    都要设。journal_mode 返回值不检查——旧连接持有的锁可能导致切换失败，
+    那时库已是 WAL 或单进程场景，静默沿用现状即可。
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:  # 锁冲突时切换失败 → 单进程降级可接受
+        pass
     return conn
 
 
@@ -66,7 +82,7 @@ class Store:
     def __init__(self, db_path: Path | None = None):
         path = db_path or (settings.data_dir / "tech-digest.db")
         self.db_path = path
-        self.conn = _conn(path)
+        self.conn = connect_db(path)
         self.conn.executescript(SCHEMA)
         # 增量迁移：旧库缺列（SQLite 无 IF NOT EXISTS 语法，逐列 PRAGMA 探测）
         # daily_snapshot.issue_no —— v1.x → v2.0 期数

@@ -57,11 +57,22 @@ def title_similarity(a: str, b: str) -> float:
 
 
 def is_duplicate(a: dict, b: dict, threshold: float = TITLE_SIM_THRESHOLD) -> bool:
-    """URL 精确（规范化后）或标题相似度 ≥ threshold → 重复。"""
+    """URL 精确（规范化后）或标题相似度 ≥ threshold → 重复。
+
+    quick_ratio 剪枝（2026-10-08 M1）：池化后单班对比量从 O(班次×14 期) 涨到
+    O(班次×14 天全池)，先算上界不上阈值的直接跳过完整 ratio——语义不变，
+    只省无效计算。
+    """
     ua, ub = normalize_url(a.get("url", "")), normalize_url(b.get("url", ""))
     if ua and ub and ua == ub:
         return True
-    return title_similarity(_title(a), _title(b)) >= threshold
+    ta, tb = _title(a), _title(b)
+    if not ta or not tb:
+        return False
+    sm = SequenceMatcher(None, ta.lower(), tb.lower())
+    if sm.real_quick_ratio() < threshold or sm.quick_ratio() < threshold:
+        return False
+    return sm.ratio() >= threshold
 
 
 def dedupe_news(items: list[dict], history: list[tuple[str, dict]]) \

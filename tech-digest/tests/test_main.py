@@ -121,6 +121,8 @@ def _run(tmp, day="2026-09-17", pick=PICK, items=None, dry=True,
 
     with patch("main.Store", return_value=store), \
          patch("main.fetch_all", return_value=(raw, stats)), \
+         patch("main._pool_daily_materials", return_value=None), \
+         patch("main._mark_pool_consumed") as _mpc, \
          patch("main.settings.sse_market_api_key", "fake-key" if has_ai else ""), \
          patch("main.settings.deepseek_api_key", ""), \
          patch("main.settings.output_dir", tmp), \
@@ -533,6 +535,7 @@ class TestStarTask(unittest.TestCase):
         captured = {}
         with patch("main.Store", return_value=store), \
              patch("main.fetch_all", return_value=(raw, stats)), \
+             patch("main._pool_star_trending", return_value=[]), \
              patch("main.settings.sse_market_api_key", "fake-key"), \
              patch("main.settings.deepseek_api_key", ""), \
              patch("main.settings.output_dir", Path(tempfile.mkdtemp())), \

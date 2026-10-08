@@ -25,6 +25,13 @@ GitHub monorepo（本仓库）
 - 调度：`daily 09:15`（deadline 24h 补跑）/ `star 周六 09:25` / `weekly 周日 10:00`，
   与原 systemd timer 一致；`Forbid` 不重叠、`BackoffLimit=0` 不自动重试（同日幂等
   由 data/ SQLite 去重保证，重跑走控制台「立即运行」或 POST /v1/agents/tech-digest/tasks/<task>/run）。
+- **编辑部 M1 新增 ingest 班**（2026-10-08，决策留底见
+  `docs/superpowers/plans/2026-10-08-editorial-m1-content-pool.md`）：
+  `7 */2 * * *`（每小时第 7 分起每 2h 一班，与 09:15/09:25 发布班错峰），
+  deadline 14400s，零 LLM 纯 HTTP（实测全班 ~50s）；素材入池后 daily/star
+  改从池内取材，**池空/池故障自动回退「即时抓取」老路径，永不因池空停刊**
+  ——因此先上代码、后上 ingest 调度也安全。反爬 403/405 命中自动冷却该源
+  24h（meta 表 `pool_cooldown:*`），其余源不受累。
 - 仓库零改动适配（run 命令内完成）：依赖在 run 内安装（`pip install requests beautifulsoup4`，
   走清华镜像）；data 状态盘挂载到 `/work/state` 再软链为 `tech-digest/data`
   （挂载点若落在 clone 目录内会导致 git clone 失败）。
@@ -44,6 +51,12 @@ GitHub monorepo（本仓库）
 | `DEEPSEEK_API_KEY/MODEL` | 部署时注入 | 备用通道（Anthropic 兼容），与主通道故障域隔离 |
 | `MARKET_REFRESH_TOKEN/USER_TELEPHONE/BASE_URL` | 部署时注入 | 集市发帖凭证（BASE_URL=172.18.0.4:8080 docker 桥直连） |
 | `TECH_DIGEST_*` | spec 显式设定 | 调优项，与原 .env 同值 |
+| `TECH_DIGEST_INGEST_INTERVAL_H` | 2 | ingest 抓取间隔语义值（消费者=spec 的 cron/deadline，见 M1 决策 D11） |
+| `TECH_DIGEST_LLM_CONCURRENCY` | 1 | M2 LLM worker 池并发度（伪并行开关，换算力改这个；M1 仅入配置） |
+| `TECH_DIGEST_POOL_TTL_DAYS` | 7 | 池内 candidate 过期天数 |
+| `TECH_DIGEST_RESERVED_TTL_DAYS` | 90 | reserved 高价值沉淀保留天数 |
+| `TECH_DIGEST_REVIEW_THRESHOLD` | 0.7 | M2 终审打回线（M1 仅入配置） |
+| `TECH_DIGEST_RESERVE_SCORE` | 0.8 | M2 高价值沉淀线（M1 仅入配置） |
 
 secrets 一律不入库：spec 文件里是占位符，部署时从服务器
 `/root/SSE_Market/SSE-Agent/tech-digest/.env` 注入。
