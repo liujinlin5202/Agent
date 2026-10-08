@@ -8,6 +8,10 @@
 > （`systemctl disable --now ops-report.timer`，unit 保留可恢复）。它是巡检工具
 > 而非业务组件，需 docker.sock+SSH 供给、暂无秋坞形态；恢复 =
 > `systemctl enable --now ops-report.timer`。
+>
+> **下一步演进**：编辑部迭代计划（content pool + 编辑部流水线 + 高价值沉淀）见
+> [EDITORIAL_PLAN.md](EDITORIAL_PLAN.md)——M1 池子底座 / M2 质量环 / M3 沉淀，
+> 含全部决策理由与上手指南。
 
 ## 部署形态
 
