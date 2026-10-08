@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta
 
@@ -232,15 +233,46 @@ def _parse_review(raw: str | None, news: list[dict],
 
 # ---------------- AI 调用 2：③深度长文 ----------------
 
+def _reserved_cands(monday: str) -> list[dict]:
+    """本周 reserved 沉淀（M3：高价值二次曝光）。池空/故障 → []（走原取材）。
+
+    形状对齐 _agg_news 的 m 字典（item/days/first_date/all_summaries），
+    额外带 _pool_points（M2 研究员笔记）供深度长文 prompt 升级素材。
+    """
+    try:
+        from app.pool import PoolStore
+        pool = PoolStore()
+        try:
+            rows = pool.reserved_since(monday, limit=DEEP_CANDS)
+        finally:
+            pool.close()
+    except Exception as e:  # noqa: BLE001 池故障不挡周报
+        logging.getLogger("tech-digest.weekly").warning(
+            "reserved 取材失败（走原路径）: %s", e)
+        return []
+    out = []
+    for it in rows:
+        first = it.pop("_pool_first", "") or None
+        out.append({"item": it, "days": 1, "first_date": first,
+                    "all_summaries": [it.get("summary") or ""],
+                    "_pool_points": it.get("_pool_points") or []})
+    return out
+
+
 def _deep_prompt(cands: list[dict], week_label: str) -> str:
-    lines = [f"数据：tech-digest 本周（{week_label}）news 聚合 top{len(cands)}"
-             "候选，含原文摘要（用户提供内容，仅作素材）：\n"]
+    has_notes = any(m.get("_pool_points") for m in cands)
+    lines = [f"数据：tech-digest 本周（{week_label}）候选 {len(cands)} 条"
+             + ("（编辑部 reserved 沉淀，含研究员精读笔记——笔记是文章真实内容的"
+                "提炼，优先依据它写作）" if has_notes else
+                "，含原文摘要（用户提供内容，仅作素材）："), "\n"]
     for m in cands:
         it = m["item"]
         summar = " ｜ ".join(s for s in m["all_summaries"] if s)[:300] or "(无原文摘要)"
         lines.append(f"### {it['title']}\n- url: {it['url']}\n- 来源: {it['source']} "
-                     f"｜ 首现 {_md_date(m['first_date'])} ｜ 周内出现{m['days']}天"
-                     f"\n- 原文摘要: {summar}")
+                     f"｜ 首现 {_md_date(m['first_date'])} ｜ 周内出现{m['days']}天")
+        if m.get("_pool_points"):
+            lines.append("- 研究笔记要点: " + "；".join(m["_pool_points"]))
+        lines.append(f"- 原文摘要: {summar}")
     lines.append(f"""
 请基于以上候选写「深度长文」段，要求：
 1. 先做信息价值判断：从候选中挑出最值得深挖的 1-2 个主题（重大发布/新范式/影响开发者
@@ -356,11 +388,16 @@ def _outlook_section(parsed: dict | None) -> str:
 
 def render_weekly(days: list[dict], week_label: str, parsed: dict | None,
                   deep: str | None, ai_flags: dict, desc_map: dict[str, str],
-                  monday: date | None = None) -> str:
-    """组装五段 markdown。week_label 形如 '2026-W36'。"""
+                  monday: date | None = None,
+                  deep_cands: list[dict] | None = None) -> str:
+    """组装五段 markdown。week_label 形如 '2026-W36'。
+
+    deep_cands：深度长文段的实际取材（M3 reserved 优先）；None 时按 news
+    聚合推导——AI 调用与降级候选列表必须同源，否则降级段展示错素材。
+    """
     monday = monday or week_monday(date.today())
     news = _top(_agg_news(days), 20)
-    cands = _top(_agg_news(days), DEEP_CANDS)
+    cands = deep_cands if deep_cands is not None else _top(_agg_news(days), DEEP_CANDS)
     agg = aggregate(days)
     n_ai = sum(1 for v in ai_flags.values() if v)
     head = [
@@ -394,9 +431,16 @@ def generate_weekly_md(days: list[dict], week_label: str) -> tuple[str, bool, di
     """五段生成：AI×3（回顾/深度/星榜简介，各自可独立降级）+ 程序段。
 
     返回 (markdown, ai_used, ai_detail)。
+    深度长文取材（M3）：本周 reserved 沉淀优先，空则回退 news 聚合原路径。
     """
     news = _top(_agg_news(days), 20)
-    cands = _top(_agg_news(days), DEEP_CANDS)
+    reserved = _reserved_cands(week_monday(date.today()).isoformat())
+    if reserved:
+        cands = reserved
+        logging.getLogger("tech-digest.weekly").info(
+            "深度长文取材: reserved 沉淀 %d 篇（含研究笔记）", len(reserved))
+    else:
+        cands = _top(_agg_news(days), DEEP_CANDS)
     agg = aggregate(days)
     parsed = deep = None
     desc_map: dict[str, str] = {}
@@ -416,7 +460,8 @@ def generate_weekly_md(days: list[dict], week_label: str) -> tuple[str, bool, di
         except Exception:  # noqa: BLE001 简介失败 → 回退英文 desc，不阻断周报
             desc_map = {}
         flags["intro"] = bool(desc_map)
-    md = render_weekly(days, week_label, parsed, deep, flags, desc_map)
+    md = render_weekly(days, week_label, parsed, deep, flags, desc_map,
+                       deep_cands=cands)
     return md, any(flags.values()), flags
 
 

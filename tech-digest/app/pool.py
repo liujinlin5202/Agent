@@ -313,6 +313,38 @@ class PoolStore:
         self.conn.commit()
         return n
 
+    def reserved_since(self, since_day: str, limit: int = 8) -> list[dict]:
+        """本周 reserved 沉淀（M3：weekly 深度长文段的高价值二次曝光）。
+
+        返回 v2 条目（附 _pool_score / _pool_points 研究要点）；
+        score IS NULL 的行不取（reserved 的入场券本就是评分，双保险）。
+        池故障由调用方 fail-open（走 weekly 原取材路径）。
+        """
+        rows = self.conn.execute(
+            "SELECT url, raw, score, research, first_seen FROM pool_items "
+            "WHERE kind='news' AND status='reserved' AND score IS NOT NULL "
+            "AND first_seen >= ? ORDER BY score DESC LIMIT ?",
+            (since_day, limit)).fetchall()
+        out = []
+        for r in rows:
+            try:
+                it = json.loads(r["raw"])
+            except (ValueError, TypeError):
+                continue
+            it["_pool_url"] = r["url"]
+            it["_pool_score"] = r["score"]
+            it["_pool_first"] = (r["first_seen"] or "")[:10]
+            if r["research"]:
+                try:
+                    detail = json.loads(r["research"])
+                    it["_pool_points"] = detail.get("key_points") or []
+                except (ValueError, TypeError):
+                    it["_pool_points"] = []
+            else:
+                it["_pool_points"] = []
+            out.append(it)
+        return out
+
     # ---------- 状态迁移 ----------
 
     def mark_consumed(self, urls: list[str], day: str) -> int:

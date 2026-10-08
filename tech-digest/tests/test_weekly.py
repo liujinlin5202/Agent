@@ -4,7 +4,9 @@
 v4.5（2026-09-21）：裁撤每日收录量/语言分布/爬虫自检三节，对应旧测试一并移除。
 """
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from datetime import date
 from unittest import mock
 
@@ -281,3 +283,80 @@ class TestRenderAndGenerate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReservedDeepCandidates(unittest.TestCase):
+    """M3：深度长文段优先消费本周 reserved 沉淀；空/故障回退原路径。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.datadir = Path(self.tmp.name)
+        self.patches = [mock.patch("app.config.settings.data_dir", self.datadir),
+                        mock.patch("app.pool.settings.data_dir", self.datadir)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def _pool(self):
+        from app.pool import PoolStore
+        return PoolStore(self.datadir / "tech-digest.db")
+
+    def _item(self, title):
+        return {"type": "news", "title": title, "url": f"https://x.com/{title}",
+                "source": "hacker-news", "author": "a", "published_at": None,
+                "fetched_at": "2026-10-08T07:07:00",
+                "summary": f"{title} 的摘要，含具体技术内容。", "ai_summary": None,
+                "confidence": None, "trending": None, "points": 100}
+
+    def test_reserved_feeds_deep_prompt_with_points(self):
+        from app import weekly
+        pool = self._pool()
+        pool.upsert_news([self._item("高分沉淀文")])
+        pool.mark_reserved(["https://x.com/高分沉淀文"])
+        pool.save_stage("https://x.com/高分沉淀文", "score", 0.85)
+        pool.save_stage("https://x.com/高分沉淀文", "research", {
+            "kind": "research", "key_points": ["要点一", "要点二"]})
+        pool.close()
+        cands = weekly._reserved_cands("2026-10-05")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["item"]["title"], "高分沉淀文")
+        self.assertEqual(cands[0]["_pool_points"], ["要点一", "要点二"])
+        prompt = weekly._deep_prompt(cands, "2026-W41")
+        self.assertIn("高分沉淀文", prompt)
+        self.assertIn("研究笔记要点", prompt)
+        self.assertIn("reserved 沉淀", prompt)
+
+    def test_empty_reserved_returns_empty(self):
+        from app import weekly
+        self.assertEqual(weekly._reserved_cands("2026-10-05"), [])
+
+    def test_unscored_reserved_excluded(self):
+        from app import weekly
+        pool = self._pool()
+        pool.upsert_news([self._item("无分沉淀文")])
+        pool.mark_reserved(["https://x.com/无分沉淀文"])
+        pool.close()
+        self.assertEqual(weekly._reserved_cands("2026-10-05"), [])
+
+    def test_generate_weekly_uses_reserved_when_present(self):
+        from app import weekly
+        pool = self._pool()
+        pool.upsert_news([self._item("沉淀首选文")])
+        pool.mark_reserved(["https://x.com/沉淀首选文"])
+        pool.save_stage("https://x.com/沉淀首选文", "score", 0.9)
+        pool.close()
+        days = [{"date": "2026-10-07", "issue_no": 1, "items": []}]
+        with mock.patch.object(weekly.llm, "chat", return_value=None), \
+             mock.patch.object(weekly, "_reserved_cands",
+                               return_value=[{"item": self._item("沉淀首选文"),
+                                              "days": 1, "first_date": "2026-10-07",
+                                              "all_summaries": ["摘要"],
+                                              "_pool_points": ["要点"]}]):
+            md, used, flags = weekly.generate_weekly_md(days, "2026-W41")
+        self.assertIn("深度长文", md)
+        # deep AI 调用失败时的降级候选应是 reserved 而非 news 聚合（days 里没有条目）
+        self.assertIn("沉淀首选文", md)
