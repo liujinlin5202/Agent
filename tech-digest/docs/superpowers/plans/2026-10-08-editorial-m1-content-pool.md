@@ -236,18 +236,21 @@ weekly 周日 10:00：零改动（吃 daily_snapshot）
   star 池模式/回退；发帖成功才 mark_consumed。
 - 回归：全量 549+ 用例保持绿（含修后的 test_llm）。
 
-## 5. 部署与回滚（预告，跨仓动作待确认）
+## 5. 部署与回滚（实际执行记录，2026-10-08）
 
-1. 本仓 push main → 秋坞 POST /v1/deploys（现役 spec 先行，ingest 尚无调度，
-   新代码对 daily/star 是「读空池走回退」，行为与旧版逐字节一致——**这是
-   先部署代码、后上调度也安全的原因**）。
-2. qiudock 仓 `agents/tech-digest.yaml`：schedules 增 ingest（`7 */2 * * *`，
-   deadline 14400，resources 400m/512Mi 显式）、env 增 §2 六项、evals 增
-   ingest-dryrun 门禁。**属 qiudock 仓改动，按三仓纪律另行征得确认后提交。**
-3. 验收：ingest 连跑两班池子有货（控制台运行历史 + run_log pool counts）；
-   次日 daily 照常发帖且 run_log 显示 pool 模式；双 dry-run 门禁绿。
-4. 回滚：控制台一键回滚锚点；ingest 调度可单独 suspend（池停摆，daily 自动
-   回退老路径，发布不断）——回退路径本身也是空池兜底的一次真实演练。
+1. 本仓 push main（2c4aea0..bca8608）→ 秋坞 POST /v1/deploys（`scripts/deploy_td.py`
+   做占位符注入）→ 版本 **v-2610080640**，门禁 2/2、CronJob×4（含 ingest）武装，
+   回滚锚 v-2610080401。
+2. qiudock 仓 `agents/tech-digest.yaml`（commit 8a9c030）：schedules 增 ingest
+   （`7 */2 * * *`，deadline 14400）、env 增 §2 六项、evals 增 ingest-dryrun。
+3. **部署验收揪出平台级 bug**（agent-run hollow exec，python 从未在平台 job 里
+   执行过，割接日门禁 15s 通过即其假象）——独立复盘见
+   [INC-20261008-QD02](2026-10-08-incident-agent-run-hollow-exec.md)。当日热修
+   镜像（digest f94f7cfe）并收编脚本入 qiudock 仓（a8fd308）。
+4. 验证记录（§7 更新）：生产 ingest 班全链路 62s 跑通、池 64+13 入库；
+   clone 失败场景正确 Failed（可见失败）。
+5. 回滚：控制台一键回滚锚点；ingest 调度可单独 suspend（池停摆，daily 自动
+   回退老路径，发布不断）。
 
 ## 6. 基线快照（开工前实测，2026-10-08）
 
