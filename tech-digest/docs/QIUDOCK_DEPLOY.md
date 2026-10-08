@@ -3,6 +3,11 @@
 > 2026-10-08 割接完成。本服务现由秋坞平台调度（k8s CronJob×3），原 systemd timer
 > 已停用（unit 文件保留 = 回滚锚）。本文记录部署形态、环境变量契约与运维入口，
 > 供仓库协作者对照。
+>
+> **同日补充**：`ops_report`（每两天 21:30 的整机巡检邮件）也于 2026-10-08 停用
+> （`systemctl disable --now ops-report.timer`，unit 保留可恢复）。它是巡检工具
+> 而非业务组件，需 docker.sock+SSH 供给、暂无秋坞形态；恢复 =
+> `systemctl enable --now ops-report.timer`。
 
 ## 部署形态
 
