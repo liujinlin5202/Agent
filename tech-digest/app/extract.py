@@ -229,3 +229,26 @@ def fetch_article(url: str, *, timeout: int = 12) -> dict | None:
     if len(r["text"]) < 500:
         return None
     return r
+
+
+def fetch_with_mirror(item: dict) -> dict | None:
+    """原文抓取公共阶梯（2026-10-08 M2 自 main._try_fetch_art 提升为单一实现）：
+
+    extract → 镜像（wallstreetcn 等 SPA 空壳走内容 API）。全文只抓一次，
+    调用方（闸门/深读/正文）共用缓存。抓取失败只记日志，返回 None 交调用方
+    按「该条降级」处理，绝不向上抛。
+    """
+    from app import mirror
+
+    url = item.get("url") or ""
+    try:
+        art = fetch_article(url)
+    except Exception as e:  # noqa: BLE001 单篇抓取失败 → 镜像通道
+        log.warning("原文抓取失败（%s）→ 尝试镜像通道: %s", item.get("title"), e)
+        art = None
+    if art is None and mirror.needs_mirror(url):
+        try:
+            art = mirror.mirror_fetch(url)
+        except Exception as e:  # noqa: BLE001 镜像失败 → 交还调用方降级
+            log.warning("镜像通道失败（%s）: %s", item.get("title"), e)
+    return art

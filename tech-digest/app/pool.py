@@ -280,6 +280,39 @@ class PoolStore:
         items.sort(key=lambda p: p[0])
         return [it for _, it in items[:limit]]
 
+    # ---------- 流水线落库（M2 编辑部：断点续跑的存储面） ----------
+
+    _STAGE_COLUMNS = ("score", "score_detail", "research", "review")
+
+    def get_item(self, url: str) -> dict | None:
+        """按规范化 URL 取池行（流水线各步读既有产物，决定跳过或重烧）。"""
+        row = self.conn.execute(
+            "SELECT * FROM pool_items WHERE url=? AND kind='news'", (url,)).fetchone()
+        return dict(row) if row else None
+
+    def save_stage(self, url: str, column: str, payload) -> bool:
+        """写流水线产物列（列名白名单）；返回行是否存在。"""
+        if column not in self._STAGE_COLUMNS:
+            raise ValueError(f"非法产物列: {column}")
+        text = payload if isinstance(payload, str) else json.dumps(
+            payload, ensure_ascii=False)
+        cur = self.conn.execute(
+            f"UPDATE pool_items SET {column}=? WHERE url=? AND kind='news'",
+            (text, url))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def mark_reserved(self, urls: list[str]) -> int:
+        """candidate → reserved（score≥沉淀线且未入选，weekly 深读段 M3 消费）。"""
+        n = 0
+        for url in urls:
+            cur = self.conn.execute(
+                "UPDATE pool_items SET status='reserved' "
+                "WHERE url=? AND kind='news' AND status='candidate'", (url,))
+            n += cur.rowcount
+        self.conn.commit()
+        return n
+
     # ---------- 状态迁移 ----------
 
     def mark_consumed(self, urls: list[str], day: str) -> int:

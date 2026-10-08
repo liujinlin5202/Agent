@@ -41,7 +41,7 @@ import time
 from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
-from app import daily_ai, dedup, extract, marketdb, mirror, preference, titles
+from app import daily_ai, dedup, editorial, extract, marketdb, preference, titles
 from app.config import settings
 from app.digest import headline_of, render_repost, render_star_post
 from app.dedup import normalize_url
@@ -252,19 +252,8 @@ def _gate_groups(candidates: list[dict]) -> dict[str, list[dict]]:
 
 
 def _try_fetch_art(item: dict) -> dict | None:
-    """原文抓取公共阶梯（闸门与 _fetch_body 共用，全文只抓一次）：extract → 镜像。"""
-    art = None
-    try:
-        art = extract.fetch_article(item["url"])
-    except Exception as e:  # noqa: BLE001 单篇抓取失败 → 镜像通道
-        log.warning("原文抓取失败（%s）→ 尝试镜像通道: %s", item.get("title"), e)
-    if art is None and mirror.needs_mirror(item.get("url") or ""):
-        # wallstreetcn 文章页是 SPA 空壳 → 内容 API 确定性取全文（app/mirror.py）
-        try:
-            art = mirror.mirror_fetch(item["url"])
-        except Exception as e:  # noqa: BLE001 镜像失败 → 交还调用方降级
-            log.warning("镜像通道失败（%s）: %s", item.get("title"), e)
-    return art
+    """原文抓取公共阶梯（实现已提升到 extract.fetch_with_mirror，M2 起单一实现）。"""
+    return extract.fetch_with_mirror(item)
 
 
 def _prefetch_gate(candidates: list[dict]) -> list[dict]:
@@ -542,46 +531,80 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
         else:
             log.info("倾向模式: 默认")
         candidates = news if pool_mode else _daily_candidates(news)
-        gated = _prefetch_gate(candidates)
-        sel = gated or candidates
-        if gated:
-            log.info("可爬性闸门: %d/%d 篇验证可抓全文，AI 只在此池中挑选",
-                     len(gated), len(candidates))
-        elif pool_mode:
-            log.warning("可爬性闸门: 0 篇通过（全军覆没），回退池内全量候选")
-        else:
-            log.warning("可爬性闸门: 0 篇通过（全军覆没），回退全量候选池")
-        item, pick, ai_used = _pick_article(sel, day, pref)
-        if not item:
-            store.log("daily", "error", {"detail": "no_candidates"})
-            log.error("没有任何候选文章（全部源失败/去重清空），不产出日报")
-            return 1
 
+        # M2 编辑部流水线（评委→研究员→作者→终审）：池模式 + 有 key 才进；
+        # 任一关键步整体失败 → 回退 M1 路径（gate + ai_pick），永不因单点停刊
         has_ai = _has_ai()
-        body, mode, author = _fetch_body(item, has_ai)
-        why = (pick or {}).get("why", "").strip()
-        digest = (pick or {}).get("digest", "").strip()
-        # lead/lead_kind 契约（见 digest.render_repost）：全文 > AI 导读 > 原文摘要 > 空手
-        if mode == "full":
-            lead, kind = body, "full"
-        elif digest:
-            lead, kind = digest, "digest"
-        elif (item.get("summary") or "").strip():
-            # AI 没参与（无 key / 调用失败）：拿原文摘要顶上，渲染时明示「不是全文」
-            lead, kind = item["summary"].strip(), "summary"
+        editorial_result = None
+        if pool_mode and has_ai:
+            try:
+                editorial_result = editorial.run_pipeline(candidates, pref,
+                                                          dry_run=dry_run)
+            except Exception as e:  # noqa: BLE001
+                log.warning("编辑部流水线异常（回退 M1 路径）: %s", e)
+                editorial_result = None
+
+        gated: list[dict] = []
+        if editorial_result:
+            pipeline_mode = "editorial"
+            review_d = editorial_result.get("review")
+            pick_d = editorial_result["pick"]
+            pick = pick_d
+            item = pick_d["item"]
+            ai_used = True
+            mode = pick_d["lead_kind"]
+            log.info("编辑部终稿: %s（形态 %s，终审 %.2f）",
+                     item.get("title", "")[:30], mode,
+                     (review_d or {}).get("total", -1))
         else:
-            lead, kind = "", "none"
-        # 知识卡片（v4.1）：AI 失败返回 []，纯装饰不影响发布。
-        # 语境优先级：全文译文 > AI 导读（digest 模式下正文缺席）> 原文摘要
-        glossary = daily_ai.ai_glossary(
-            item.get("title") or "",
-            body or digest or (item.get("summary") or "")) if has_ai else []
-        pick_d = {"item": item, "why": why, "lead": lead, "lead_kind": kind,
-                  "author": author, "glossary": glossary}
+            pipeline_mode = "legacy"
+            review_d = None
+            gated = _prefetch_gate(candidates)
+            sel = gated or candidates
+            if gated:
+                log.info("可爬性闸门: %d/%d 篇验证可抓全文，AI 只在此池中挑选",
+                         len(gated), len(candidates))
+            elif pool_mode:
+                log.warning("可爬性闸门: 0 篇通过（全军覆没），回退池内全量候选")
+            else:
+                log.warning("可爬性闸门: 0 篇通过（全军覆没），回退全量候选池")
+            item, pick, ai_used = _pick_article(sel, day, pref)
+            if not item:
+                store.log("daily", "error", {"detail": "no_candidates"})
+                log.error("没有任何候选文章（全部源失败/去重清空），不产出日报")
+                return 1
+
+            has_ai = _has_ai()
+            body, mode, author = _fetch_body(item, has_ai)
+            why = (pick or {}).get("why", "").strip()
+            digest = (pick or {}).get("digest", "").strip()
+            # lead/lead_kind 契约（见 digest.render_repost）：全文 > AI 导读 > 原文摘要 > 空手
+            if mode == "full":
+                lead, kind = body, "full"
+            elif digest:
+                lead, kind = digest, "digest"
+            elif (item.get("summary") or "").strip():
+                # AI 没参与（无 key / 调用失败）：拿原文摘要顶上，渲染时明示「不是全文」
+                lead, kind = item["summary"].strip(), "summary"
+            else:
+                lead, kind = "", "none"
+            # 知识卡片（v4.1）：AI 失败返回 []，纯装饰不影响发布。
+            # 语境优先级：全文译文 > AI 导读（digest 模式下正文缺席）> 原文摘要
+            glossary = daily_ai.ai_glossary(
+                item.get("title") or "",
+                body or digest or (item.get("summary") or "")) if has_ai else []
+            pick_d = {"item": item, "why": why, "lead": lead, "lead_kind": kind,
+                      "author": author, "glossary": glossary}
 
         issue_no = store.get_issue_no(day) or store.next_issue_no()
         recent = store.recent_daily_titles(7, before_day=day)
-        title = _pick_post_title(pick, recent, _fallback_title(pick, sel))
+        # 兜底标题（发帖标题阶梯全不合格时用）：编辑部模式=选中文章原题清洗；
+        # legacy=候选反查（ai_pick 的 idx 是候选序，编辑部 idx 是 top 序不可复用）
+        if pipeline_mode == "editorial":
+            fb_title = headline_of(item.get("title") or "", "", "")
+        else:
+            fb_title = _fallback_title(pick, gated or candidates)
+        title = _pick_post_title(pick, recent, fb_title)
         ctx = {"issue_no": issue_no, "pick": pick_d}
         md = render_repost(day, issue_no, ctx)
         settings.output_dir.mkdir(parents=True, exist_ok=True)
@@ -597,6 +620,8 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
         degraded = bool(src_errors) or (has_ai and (not ai_used or mode == "digest"))
         store.log("daily", "degraded" if degraded else "ok", {
             "material": "pool" if pool_mode else "live",
+            "pipeline": pipeline_mode,
+            "review_total": (review_d or {}).get("total"),
             "source_stats": {n: {k: v for k, v in s.items() if k != "detail"}
                              for n, s in stats.items()},
             "dedup_removed": dedup_removed,

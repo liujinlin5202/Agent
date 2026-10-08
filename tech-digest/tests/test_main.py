@@ -219,9 +219,11 @@ class TestPrefetchGate(unittest.TestCase):
                 raise r
             return r
 
-        with patch("main.extract.fetch_article", side_effect=fake_fetch), \
-             patch("main.mirror.mirror_fetch", side_effect=fake_mirror), \
-             patch("main.mirror.needs_mirror",
+        # M2 起抓取阶梯单一实现在 extract.fetch_with_mirror（函数内 from app
+        # import mirror），桩要打在模块属性上才拦得住
+        with patch("app.extract.fetch_article", side_effect=fake_fetch), \
+             patch("app.mirror.mirror_fetch", side_effect=fake_mirror), \
+             patch("app.mirror.needs_mirror",
                    side_effect=lambda u: "见闻" in u):
             return main._prefetch_gate(items), calls
 
@@ -383,7 +385,7 @@ class TestFetchBody(unittest.TestCase):
     """全文抓取降级链：中文直用 → 英文中译 → 拿不到全文走导读。任一层失败不抛。"""
 
     def test_chinese_used_directly(self):
-        with patch("main.extract.fetch_article",
+        with patch("app.extract.fetch_article",
                    return_value={"text": "这是中文全文。" * 100, "author": "作者甲"}), \
              patch("main.daily_ai.ai_translate") as tr:
             body, mode, author = _fetch_body(_item("t", "sspai"), has_ai=True)
@@ -392,7 +394,7 @@ class TestFetchBody(unittest.TestCase):
         tr.assert_not_called()
 
     def test_english_translated(self):
-        with patch("main.extract.fetch_article",
+        with patch("app.extract.fetch_article",
                    return_value={"text": "An English article " * 100, "author": ""}), \
              patch("main.daily_ai.ai_translate", return_value="中文译文"):
             body, mode, _ = _fetch_body(_item("t", "hacker-news"), has_ai=True)
@@ -402,8 +404,8 @@ class TestFetchBody(unittest.TestCase):
         """闸门已抓到全文（_art 缓存）→ 直接用，不再发请求（全文只抓一次）。"""
         it = _item("闸门过的", "hacker-news", points=10)
         it["_art"] = {"text": "这是一篇中文全文，内容足够扎实可读。", "author": "丙"}
-        with patch("main.extract.fetch_article") as fa, \
-             patch("main.mirror.mirror_fetch") as mf:
+        with patch("app.extract.fetch_article") as fa, \
+             patch("app.mirror.mirror_fetch") as mf:
             body, mode, author = _fetch_body(it, has_ai=False)
         fa.assert_not_called()
         mf.assert_not_called()
@@ -411,19 +413,19 @@ class TestFetchBody(unittest.TestCase):
         self.assertIn("中文全文", body)
 
     def test_english_translate_fail_falls_to_digest(self):
-        with patch("main.extract.fetch_article",
+        with patch("app.extract.fetch_article",
                    return_value={"text": "An English article " * 100, "author": ""}), \
              patch("main.daily_ai.ai_translate", return_value=None):
             body, mode, _ = _fetch_body(_item("t", "hacker-news"), has_ai=True)
         self.assertEqual((body, mode), ("", "digest"))
 
     def test_unfetchable_falls_to_digest(self):
-        with patch("main.extract.fetch_article", return_value=None):
+        with patch("app.extract.fetch_article", return_value=None):
             body, mode, _ = _fetch_body(_item("t", "zhihu-hot"), has_ai=True)
         self.assertEqual((body, mode), ("", "digest"))
 
     def test_fetch_raise_swallowed(self):
-        with patch("main.extract.fetch_article", side_effect=RuntimeError("403")):
+        with patch("app.extract.fetch_article", side_effect=RuntimeError("403")):
             body, mode, _ = _fetch_body(_item("t", "zhihu-hot"), has_ai=False)
         self.assertEqual((body, mode), ("", "digest"))
 
@@ -431,8 +433,8 @@ class TestFetchBody(unittest.TestCase):
         """wallstreetcn 文章页是 SPA：extract 返回 None → 镜像通道拿全文。"""
         it = _item("见闻深度", "wallstreetcn")
         it["url"] = "https://wallstreetcn.com/articles/3781850"
-        with patch("main.extract.fetch_article", return_value=None), \
-             patch("main.mirror.mirror_fetch",
+        with patch("app.extract.fetch_article", return_value=None), \
+             patch("app.mirror.mirror_fetch",
                    return_value={"text": "镜像全文。" * 200, "author": "刘胜与"}) as mf:
             body, mode, author = _fetch_body(it, has_ai=True)
         self.assertEqual((mode, author), ("full", "刘胜与"))
@@ -442,16 +444,16 @@ class TestFetchBody(unittest.TestCase):
     def test_mirror_fail_falls_to_digest(self):
         it = _item("见闻深度", "wallstreetcn")
         it["url"] = "https://wallstreetcn.com/articles/1"
-        with patch("main.extract.fetch_article", return_value=None), \
-             patch("main.mirror.mirror_fetch", side_effect=RuntimeError("net")):
+        with patch("app.extract.fetch_article", return_value=None), \
+             patch("app.mirror.mirror_fetch", side_effect=RuntimeError("net")):
             body, mode, _ = _fetch_body(it, has_ai=True)
         self.assertEqual((body, mode), ("", "digest"))
 
     def test_non_mirror_url_skips_mirror(self):
         """知乎 403 面不走镜像（无搜索式发现），维持 digest 降级。"""
         it = _item("知乎文", "zhihu-hot")
-        with patch("main.extract.fetch_article", return_value=None), \
-             patch("main.mirror.mirror_fetch") as mf:
+        with patch("app.extract.fetch_article", return_value=None), \
+             patch("app.mirror.mirror_fetch") as mf:
             body, mode, _ = _fetch_body(it, has_ai=True)
         self.assertEqual((body, mode), ("", "digest"))
         mf.assert_not_called()
