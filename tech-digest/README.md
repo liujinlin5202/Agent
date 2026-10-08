@@ -24,6 +24,10 @@
 
 ## 调度（systemd timer）
 
+> **2026-10-08 起生产调度已迁移秋坞平台（k8s CronJob）**，systemd timer 停用（unit
+> 保留=回滚锚）。部署形态 / 环境变量契约 / LLM 网关切换 / 可观测性 / 回滚见
+> [`docs/QIUDOCK_DEPLOY.md`](docs/QIUDOCK_DEPLOY.md)；下表为 systemd 原始形态。
+
 | 任务 | 时间 | 说明 |
 | --- | --- | --- |
 | daily | `*-*-* 09:15` | 多源抓取 → AI 日报 → 发帖；同日幂等，发帖失败重试 1 次 |
