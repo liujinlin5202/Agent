@@ -2,6 +2,15 @@
 
 > 2026-10-08 定稿。交接文档：写给下一个接手的会话/协作者——包含全部决策理由、
 > 现状基线、架构设计、里程碑切分与上手指南。读这一篇即可开工，无需上下文考古。
+>
+> **进度（2026-10-08 晚）：M1/M2/M3 全部实现并上线**（代码在 GitHub main，
+> 平台版本 v-2610080640）。各里程碑决策留底与实测记录：
+> [M1](superpowers/plans/2026-10-08-editorial-m1-content-pool.md) /
+> [INC-QD02 事故复盘](superpowers/plans/2026-10-08-incident-agent-run-hollow-exec.md) /
+> [M2](superpowers/plans/2026-10-08-editorial-m2-quality-ring.md) /
+> [M3](superpowers/plans/2026-10-08-editorial-m3-reserved-weekly.md)。
+> 待观察节点：10-09 09:15 daily 平台首跑（应见 run_log material=pool、
+> pipeline=editorial）；10-18 周报深度长文段首次 reserved 取材。
 
 ---
 
