@@ -38,16 +38,37 @@ class TestApplyStateOverrides(unittest.TestCase):
             config._apply_state_overrides(s)  # 文件损坏
             self.assertEqual(s.market_refresh_token, "seed-old")
 
+    def test_env_style_keys_map(self):
+        """写入方（publisher._persist_state_value）用 env 风格键，读取端必须认识。"""
+        with tempfile.TemporaryDirectory() as td:
+            s = self._settings(Path(td), market_refresh_token="seed-old")
+            (Path(td) / "runtime_env.json").write_text(
+                json.dumps({"MARKET_REFRESH_TOKEN": "gen-B",
+                            "MARKET_BASE_URL": "http://172.18.0.6:8080"}),
+                encoding="utf-8")
+            config._apply_state_overrides(s)
+            self.assertEqual(s.market_refresh_token, "gen-B")
+            self.assertEqual(s.market_base_url, "http://172.18.0.6:8080")
+
+    def test_roundtrip_write_then_read(self):
+        """回环：publisher 写入 → config 读回（10-09 二翻车教训：两头键名不一致）。"""
+        with tempfile.TemporaryDirectory() as td:
+            s = self._settings(Path(td), market_refresh_token="seed-old")
+            with mock.patch.object(publisher.settings, "data_dir", Path(td)):
+                publisher._persist_state_value("MARKET_REFRESH_TOKEN", "gen-rotated")
+            config._apply_state_overrides(s)
+            self.assertEqual(s.market_refresh_token, "gen-rotated")
+
     def test_unknown_keys_ignored(self):
         with tempfile.TemporaryDirectory() as td:
             s = self._settings(Path(td), market_refresh_token="seed-old")
             (Path(td) / "runtime_env.json").write_text(
-                json.dumps({"MARKET_REFRESH_TOKEN": "should-not-map",
-                            "market_user_telephone": "hijack",
+                json.dumps({"market_user_telephone": "hijack",
+                            "SSE_MARKET_API_KEY": "hijack",
                             "top_n": "999"}), encoding="utf-8")
             config._apply_state_overrides(s)
-            self.assertEqual(s.market_refresh_token, "seed-old")  # 大写键不映射
             self.assertEqual(s.market_user_telephone, "")          # 白名单外不动
+            self.assertEqual(s.sse_market_api_key, "")
             self.assertEqual(s.top_n, 15)
 
 

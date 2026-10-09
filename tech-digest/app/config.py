@@ -36,7 +36,9 @@ def _apply_state_overrides(s: "Settings") -> None:
     轮换出的新 refresh_token 若只写回 .env，下一次运行就会拿已消费的旧 token
     （2026-10-09 daily 首发翻车根因：集市 auth 是一次一换的轮换制）。data/ 挂
     的 state 盘跨运行持久（秋坞 /work/state；宿主模式是真实目录），这里读
-    runtime_env.json 覆盖 env/.env 的旧值。文件损坏按不存在处理（seed 兜底）。
+    runtime_env.json 覆盖 env/.env 的旧值。键名接受 env 风格（写入方
+    publisher._persist_state_value 用 MARKET_*）与 python 字段名两种。
+    文件损坏按不存在处理（seed 兜底）。
     """
     import json
 
@@ -46,9 +48,13 @@ def _apply_state_overrides(s: "Settings") -> None:
         return
     if not isinstance(data, dict):
         return
-    allowed = {"market_refresh_token", "market_base_url"}
-    for key, value in data.items():
-        if key in allowed and isinstance(value, str) and value:
+    alias = {
+        "MARKET_REFRESH_TOKEN": "market_refresh_token",
+        "MARKET_BASE_URL": "market_base_url",
+    }
+    for raw_key, value in data.items():
+        key = alias.get(raw_key, raw_key)
+        if key in alias.values() and isinstance(value, str) and value:
             setattr(s, key, value)
 
 
