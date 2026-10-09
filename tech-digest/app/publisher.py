@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -89,7 +90,13 @@ def refresh_access_token() -> tuple[str, str] | None:
 
 
 def _persist_env_value(key: str, value: str) -> None:
-    """原子更新 .env 中指定键所在行（无该行则追加）。"""
+    """原子更新 .env 中指定键所在行（无该行则追加）。
+
+    秋坞 pod 模式下 .env 随 clone 蒸发，真正的持久落点是 state 盘的
+    runtime_env.json（config._apply_state_overrides 启动时读回、优先级最高
+    ——轮换 token 一次一换，丢了下一班就 401，2026-10-09 daily 首发翻车根因）。
+    """
+    _persist_state_value(key, value)
     env_path = BASE_DIR / ".env"
     try:
         text = env_path.read_text(encoding="utf-8")
@@ -111,6 +118,30 @@ def _persist_env_value(key: str, value: str) -> None:
         tmp.replace(env_path)
     except OSError:
         pass  # 写回失败不致命：下次 refresh 仍可继续
+
+
+# 允许进入 state 盘运行时覆盖的键（与 config._apply_state_overrides 的白名单对应）
+_STATE_ENV_KEYS = {"MARKET_REFRESH_TOKEN", "MARKET_BASE_URL"}
+
+
+def _persist_state_value(key: str, value: str) -> None:
+    """把轮换出的新值原子写入 state 盘 runtime_env.json（pod 模式的持久落点）。"""
+    if key not in _STATE_ENV_KEYS:
+        return
+    path = settings.data_dir / "runtime_env.json"
+    try:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data[key] = value
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass  # best-effort，同 .env 写回：失败不致命（当前进程内 settings 已更新）
 
 
 def markdown_to_plain(md: str) -> str:

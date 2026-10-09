@@ -29,6 +29,29 @@ def _load_dotenv() -> None:
                 os.environ[key] = value
 
 
+def _apply_state_overrides(s: "Settings") -> None:
+    """state 盘运行时覆盖（发帖轮换 token 的持久落点，优先级最高）。
+
+    秋坞 job 模式下 BASE_DIR/.env 在 pod 里属于 clone、随 pod 蒸发——发帖时
+    轮换出的新 refresh_token 若只写回 .env，下一次运行就会拿已消费的旧 token
+    （2026-10-09 daily 首发翻车根因：集市 auth 是一次一换的轮换制）。data/ 挂
+    的 state 盘跨运行持久（秋坞 /work/state；宿主模式是真实目录），这里读
+    runtime_env.json 覆盖 env/.env 的旧值。文件损坏按不存在处理（seed 兜底）。
+    """
+    import json
+
+    try:
+        data = json.loads((s.data_dir / "runtime_env.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    allowed = {"market_refresh_token", "market_base_url"}
+    for key, value in data.items():
+        if key in allowed and isinstance(value, str) and value:
+            setattr(s, key, value)
+
+
 def _get_bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
     if v is None:
@@ -83,7 +106,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         _load_dotenv()
-        return cls(
+        s = cls(
             sse_market_base_url=os.environ.get("SSE_MARKET_BASE_URL", "https://api.<MARKET_DOMAIN>/v1"),
             # 秋坞部署：未显式配 SSE_MARKET_API_KEY 时回落平台租户钥匙（LLM 网关 Bearer）
             sse_market_api_key=os.environ.get("SSE_MARKET_API_KEY") or os.environ.get("QDOCK_API_KEY", ""),
@@ -115,6 +138,8 @@ class Settings:
             review_threshold=float(os.environ.get("TECH_DIGEST_REVIEW_THRESHOLD", "0.7")),
             reserve_score=float(os.environ.get("TECH_DIGEST_RESERVE_SCORE", "0.8")),
         )
+        _apply_state_overrides(s)
+        return s
 
     def validate(self, need_ai: bool) -> None:
         """校验必需配置。need_ai=True 时（weekly）要求主/备任一 AI key；daily 允许全部缺失。"""
