@@ -139,6 +139,7 @@ class TestDailyPoolMode(IngestTestBase):
                   "review": passing_review(draft["title"], markdown, source), "attempts": []}
         captured = {}
         with patch("main._pool_daily_materials", return_value=material), \
+             patch("main.should_skip", return_value=(False, "")), \
              patch("main.Store") as fake_store, \
              patch("main.editorial.run_pipeline", return_value=result), \
              patch("main._publish_md", return_value=True), \

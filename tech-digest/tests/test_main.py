@@ -541,6 +541,7 @@ class TestStarTask(unittest.TestCase):
         captured = {}
         with patch("main.Store", return_value=store), \
              patch("main.fetch_all", return_value=(raw, stats)), \
+             patch("main.should_skip", return_value=(False, "")), \
              patch("main._pool_star_trending", return_value=[]), \
              patch("main.settings.sse_market_api_key", "fake-key"), \
              patch("main.settings.deepseek_api_key", ""), \

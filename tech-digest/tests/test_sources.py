@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """采集层解析单测：HN 单条过滤 + sspai RSS 解析（fixture，不联网）。"""
 import unittest
+from datetime import datetime
 
 from app.sources.hacker_news import parse_hit, parse_item
 from app.sources.sspai import clean_html, parse_feed
@@ -80,7 +81,8 @@ class TestHNAlgolia(unittest.TestCase):
         self.assertIsNotNone(it)
         self.assertEqual(it["source"], "hacker-news")
         self.assertEqual(it["author"], "peter")
-        self.assertIn("+08:00", it["published_at"])  # UTC → 本地
+        self.assertEqual(it["published_at"],
+                         datetime.fromisoformat("2026-08-25T04:12:22+00:00").astimezone().isoformat())
         self.assertEqual(it["summary"], "")
 
     def test_low_points_rejected(self):
@@ -110,7 +112,8 @@ class TestSSPai(unittest.TestCase):
         self.assertEqual(it["source"], "sspai")
         self.assertEqual(it["author"], "少数派编辑部")
         self.assertEqual(it["title"], "新款 MacBook Pro 上手：M4 芯片的性能与续航")
-        self.assertIn("+08:00", it["published_at"])
+        self.assertEqual(it["published_at"],
+                         datetime.fromisoformat("2026-08-30T08:00:00+08:00").astimezone().isoformat())
         self.assertIn("M4", it["summary"])
         self.assertNotIn("<b>", it["summary"])  # 已纯文本化
 

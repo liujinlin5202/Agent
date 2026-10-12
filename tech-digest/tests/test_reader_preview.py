@@ -268,7 +268,7 @@ class TestReaderPreview(unittest.TestCase):
         checkout = self.root / "checkout"
         (checkout / "app").mkdir(parents=True)
         (checkout / "scripts").mkdir()
-        for name in ("digest.py", "reader_article.py", "titles.py", "emoji.py"):
+        for name in ("__init__.py", "digest.py", "reader_article.py", "titles.py", "emoji.py"):
             shutil.copyfile(ROOT / "app" / name, checkout / "app" / name)
         shutil.copyfile(SCRIPT, checkout / "scripts" / SCRIPT.name)
         shutil.copytree(ROOT / "scripts" / "preview_assets", checkout / "scripts" / "preview_assets")
@@ -295,7 +295,7 @@ class TestReaderPreview(unittest.TestCase):
         checkout = self.root / "checkout"
         (checkout / "app").mkdir(parents=True)
         (checkout / "scripts").mkdir()
-        for name in ("digest.py", "reader_article.py", "titles.py", "emoji.py"):
+        for name in ("__init__.py", "digest.py", "reader_article.py", "titles.py", "emoji.py"):
             shutil.copyfile(ROOT / "app" / name, checkout / "app" / name)
         shutil.copyfile(SCRIPT, checkout / "scripts" / SCRIPT.name)
         self.fixture.write_text(json.dumps(sample_packet()), encoding="utf-8")
