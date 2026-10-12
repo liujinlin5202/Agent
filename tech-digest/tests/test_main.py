@@ -102,45 +102,43 @@ class FakeStore:
         pass
 
 
-def _run(tmp, day="2026-09-17", pick=PICK, items=None, dry=True,
-         body="正文全文。", mode="full", has_ai=True, gate=None, **kw):
-    """跑一次 run_daily；返回 (rc, ctx, store, tmp)。dry=False 走真跑路径（凭据置空，不会发帖）。
-    gate: _prefetch_gate 的桩返回值（None → []，即回退全量候选池的老行为）。"""
+def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
+    """Run the new pipeline contract; all generation/publication dependencies are offline."""
+    from tests.test_main_reader import ready_result
     tmp = Path(tmp)
-    raw = items if items is not None else [
-        _item("知乎爆文第一条", "zhihu-hot"),
-        _item("HN 爆文第二条", "hacker-news", points=300)]
-    stats = {"zhihu-hot": {"fetched": 1, "error": None},
-             "hacker-news": {"fetched": 1, "error": None}}
+    result = ready_result() if result is None else result
+    raw = items if items is not None else [ready_result()["item"]]
     captured = {}
     store = FakeStore()
 
-    def fake_render(day_, issue_no, ctx):
-        captured["ctx"] = ctx
-        return "md"
+    def pipeline(candidates, preference=None, pool=None, dry_run=False, recent_titles=None):
+        captured.update(candidates=candidates, result=result, preference=preference,
+                        dry_run=dry_run, recent_titles=recent_titles)
+        return result
 
     with patch("main.Store", return_value=store), \
-         patch("main.fetch_all", return_value=(raw, stats)), \
+         patch("main.fetch_all", return_value=(raw, {})), \
          patch("main._pool_daily_materials", return_value=None), \
-         patch("main._mark_pool_consumed") as _mpc, \
-         patch("main.settings.sse_market_api_key", "fake-key" if has_ai else ""), \
+         patch("main._mark_pool_consumed"), \
+         patch("main._sample_views"), \
+         patch("main.should_skip", return_value=(False, "")), \
+         patch("main.preference.load_preference", return_value=main.preference.Preference()), \
+         patch("main.settings.sse_market_api_key", "offline-model" if has_ai else ""), \
          patch("main.settings.deepseek_api_key", ""), \
          patch("main.settings.output_dir", tmp), \
          patch("main.settings.market_refresh_token", ""), \
          patch("main.settings.market_user_telephone", ""), \
          patch("main.settings.publish_weekend", True), \
          patch("main.date") as fdate, \
-         patch("main._prefetch_gate", return_value=gate or []), \
-         patch("main.daily_ai.ai_pick", return_value=pick), \
-         patch("main.daily_ai.ai_glossary",
-               return_value=[{"term": "查询计划（query plan）",
-                              "expl": "数据库把 SQL 翻译成一步步执行方案的计划。"}]), \
-         patch("main._fetch_body", return_value=(body, mode, "")), \
-         patch("main.render_repost", side_effect=fake_render):
+         patch("main.editorial.run_pipeline", side_effect=pipeline), \
+         patch("main._prefetch_gate", side_effect=AssertionError("legacy gate forbidden")), \
+         patch("main._pick_article", side_effect=AssertionError("legacy picker forbidden")), \
+         patch("main._fetch_body", side_effect=AssertionError("legacy body forbidden")), \
+         patch("main.render_repost", side_effect=AssertionError("legacy renderer forbidden")):
         fdate.today.return_value = date.fromisoformat(day)
         fdate.fromisoformat.side_effect = date.fromisoformat
         rc = run_daily(force=True, dry_run=dry)
-    return rc, captured.get("ctx"), store, tmp
+    return rc, captured, store, tmp
 
 
 class TestCandidatesOrder(unittest.TestCase):
@@ -298,42 +296,43 @@ class TestPrefetchGate(unittest.TestCase):
 
 
 class TestDailyPickFlow(unittest.TestCase):
-    def test_pick_item_by_candidate_index(self):
-        """AI 的 idx 是「候选顺序」——必须按候选反查条目（2026-08-30 错位教训）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            rc, ctx, _, _ = _run(tmp, pick={**PICK, "idx": 2})
-        self.assertEqual(rc, 0)
-        self.assertEqual(ctx["pick"]["item"]["title"], "HN 爆文第二条")
-        self.assertEqual(ctx["pick"]["lead_kind"], "full")
-        self.assertEqual(ctx["pick"]["lead"], "正文全文。")
+    """The daily entry consumes final reviewed strings, without legacy publication fallback."""
 
-    def test_ai_fail_falls_to_first_candidate(self):
+    def test_pipeline_final_selection_is_used(self):
+        from tests.test_main_reader import ready_result
+        result = ready_result()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, ctx, store, _ = _run(tmp, pick=None, body="", mode="digest")
+            rc, captured, _, _ = _run(tmp, result=result)
+            body = (Path(tmp) / "2026-09-17-daily.md").read_text(encoding="utf-8")
         self.assertEqual(rc, 0)
-        self.assertEqual(ctx["pick"]["item"]["title"], "知乎爆文第一条")  # 候选首条
-        self.assertFalse(ctx["pick"]["why"])
-        # 降级必须能从 run_log 看出来
-        daily_logs = [d for k, s, d in store.logs
-                      if k == "daily" and isinstance(d, dict) and "ai_used" in d]
-        self.assertTrue(daily_logs and daily_logs[0]["ai_used"] is False)
+        self.assertIs(captured["result"], result)
+        self.assertEqual(body, result["markdown"])
 
-    def test_no_ai_key_uses_summary_as_body(self):
+    def test_generation_failure_has_no_first_candidate_fallback(self):
+        failed = {"status": "generation_error", "reasons": ["model_unavailable"],
+                  "draft": None, "source_packet": None, "review": None, "attempts": []}
         with tempfile.TemporaryDirectory() as tmp:
-            rc, ctx, _, _ = _run(tmp, pick=None, body="", mode="digest", has_ai=False)
+            rc, _, store, _ = _run(tmp, result=failed, dry=False)
+            self.assertFalse((Path(tmp) / "2026-09-17-daily.md").exists())
+        self.assertEqual(rc, 1)
+        self.assertEqual(store.saved, [])
+        self.assertEqual(store.posted, {})
+
+    def test_no_model_does_not_publish_an_original_summary(self):
+        failed = {"status": "generation_error", "reasons": ["no_model"],
+                  "draft": None, "source_packet": None, "review": None, "attempts": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, captured, store, _ = _run(tmp, result=failed, has_ai=False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(captured["candidates"]), 1)
+        self.assertEqual(store.saved, [])
+
+    def test_recent_titles_and_dry_run_are_passed_before_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, captured, _, _ = _run(tmp)
         self.assertEqual(rc, 0)
-        # AI 完全没参与：用原文摘要顶上，标 summary（渲染时明示「不是全文」）
-        self.assertIn("原文摘要内容", ctx["pick"]["lead"])
-        self.assertEqual(ctx["pick"]["lead_kind"], "summary")
-
-    def test_glossary_passthrough_and_no_ai_empty(self):
-        """有 AI → 知识卡片进 ctx；无 AI → 空列表（不发卡）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            _, ctx, _, _ = _run(tmp)
-        self.assertEqual(ctx["pick"]["glossary"][0]["term"], "查询计划（query plan）")
-        with tempfile.TemporaryDirectory() as tmp:
-            _, ctx, _, _ = _run(tmp, has_ai=False)
-        self.assertEqual(ctx["pick"]["glossary"], [])
+        self.assertEqual(captured["recent_titles"], [])
+        self.assertIs(captured["dry_run"], True)
 
     def test_dry_run_skips_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,44 +340,49 @@ class TestDailyPickFlow(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(store.saved, [])
 
-    def test_real_run_saves_snapshot(self):
+    def test_real_run_saves_reviewed_title_in_snapshot(self):
+        from tests.test_main_reader import ready_result
         with tempfile.TemporaryDirectory() as tmp:
             rc, _, store, _ = _run(tmp, dry=False)
         self.assertEqual(rc, 0)
         self.assertEqual(len(store.saved), 1)
         self.assertEqual(store.saved[0][0], "2026-09-17")
+        self.assertEqual(store.saved[0][3], ready_result()["title"])
 
 
 class TestGateWiring(unittest.TestCase):
-    """run_daily 接线：ai_pick 的候选池 = 闸门过的池；_fallback_title 同池（idx 对齐）。"""
+    """The entry gate overrides a producer's ready claim before formal effects."""
 
-    def _run_gated(self, gate, **kw):
+    def test_low_review_does_not_save_formal_output(self):
+        from tests.test_main_reader import ready_result
+        result = ready_result()
+        result["review"]["scores"]["depth"] = 6
         with tempfile.TemporaryDirectory() as tmp:
-            rc, ctx, store, _ = _run(tmp, gate=gate, **kw)
-            return rc, ctx, store
-
-    def test_pick_pool_is_gated(self):
-        gated = [_item("闸门过的硬核文", "hacker-news", points=42)]
-        rc, ctx, store = self._run_gated(gated)
+            rc, _, store, _ = _run(tmp, result=result, dry=False)
+            self.assertFalse((Path(tmp) / "2026-09-17-daily.md").exists())
+            self.assertTrue(list((Path(tmp) / "drafts").glob("*.json")))
         self.assertEqual(rc, 0)
-        self.assertEqual(ctx["pick"]["item"]["title"], "闸门过的硬核文")
-        daily_logs = [d for k, s, d in store.logs
-                      if k == "daily" and isinstance(d, dict) and "ai_used" in d]
-        self.assertEqual(daily_logs[0]["gate_qualified"], 1)
+        self.assertEqual(store.saved, [])
 
-    def test_ai_fallback_takes_gated_first(self):
-        """AI 失败降级首条候选时，取闸门池首条（可抓全文），不是全量池首条。"""
-        gated = [_item("闸门过的硬核文", "hacker-news", points=42)]
-        rc, ctx, _ = self._run_gated(gated, pick=None)
-        self.assertEqual(rc, 0)
-        self.assertEqual(ctx["pick"]["item"]["title"], "闸门过的硬核文")
+    def test_changed_body_invalidates_prior_review(self):
+        from tests.test_main_reader import ready_result
+        result = ready_result()
+        result["markdown"] += "review之后变更"
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _, store, _ = _run(tmp, result=result, dry=False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(store.saved, [])
+        self.assertTrue(any(d.get("detail") == "generation_error" for _, _, d in store.logs))
 
-    def test_gate_run_logged_in_detail(self):
-        rc, _, store = self._run_gated([])
+    def test_producer_quality_skip_cannot_be_overridden_by_valid_review(self):
+        from tests.test_main_reader import ready_result
+        result = ready_result()
+        result["status"] = "skip_quality"
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _, store, _ = _run(tmp, result=result, dry=False)
         self.assertEqual(rc, 0)
-        daily_logs = [d for k, s, d in store.logs
-                      if k == "daily" and isinstance(d, dict) and "ai_used" in d]
-        self.assertEqual(daily_logs[0]["gate_qualified"], 0)
+        self.assertEqual(store.saved, [])
+        self.assertEqual(store.posted, {})
 
 
 class TestFetchBody(unittest.TestCase):
@@ -551,6 +555,7 @@ class TestStarTask(unittest.TestCase):
                        {"trending": t, "desc": dm}) or "star md"), \
              patch("app.publisher.publish_md",
                    return_value=(6789, "/postdetail/6789", None)), \
+             patch("main._verify_published"), \
              patch("app.publisher.refresh_access_token", return_value={"ok": 1}):
             fdate.today.return_value = date.fromisoformat(day)
             fdate.fromisoformat.side_effect = date.fromisoformat

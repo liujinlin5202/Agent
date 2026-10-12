@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta content="Ada Reader" name="author"></head><body>
+<article class="post">
+  <div class="advertisement"><p>Outer advertisement should disappear.</p></div>
+  <p>Article shell furniture should disappear too.</p>
+  <section class="post-content">
+    <h1>Why batching saves a round trip</h1>
+    <p>Body-only sentence: a batch pays connection latency once.</p>
+    <h2>Compare equal workloads</h2>
+    <ol><li>Hold the number of messages fixed.</li><li>Measure the same transport.</li></ol>
+    <p>See the <a href="https://example.org/paper">original measurement</a>.</p>
+    <pre><code>if ready:
+    send(batch)
+
+    wait()
+</code></pre>
+    <p>The cost is <math><semantics><mrow><mi>T</mi><mo>=</mo><mi>L</mi><mo>+</mo><mi>n</mi><mi>c</mi></mrow><annotation encoding="application/x-tex">T = L + n c</annotation></semantics></math>.</p>
+    <figure><img src="batch.svg" alt="A timeline of two equal workloads"><figcaption>Figure 1: connection overhead is paid once.</figcaption></figure>
+    <table><caption>Controlled latency measurement</caption><thead><tr><th>Strategy</th><th>Latency (ms)</th></tr></thead><tbody><tr><td>One batch</td><td>12</td></tr><tr><td>Two calls</td><td>22</td></tr></tbody></table>
+  </section>
+  <section class="author-card"><p>Ada Reader biography is furniture.</p></section>
+</article>
+</body></html>

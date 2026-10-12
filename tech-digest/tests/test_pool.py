@@ -187,6 +187,10 @@ class TestTopCandidates(PoolTestBase):
     def test_empty_pool_returns_empty(self):
         self.assertEqual(self.store.top_candidates(), [])
 
+    def test_resource_recommendation_does_not_use_candidate_limit(self):
+        self.store.upsert_news([_news("本周资源推荐", points=999), _news("缓存失效的形式化推导", points=10)])
+        self.assertEqual([it["title"] for it in self.store.top_candidates(limit=1)], ["缓存失效的形式化推导"])
+
 
 class TestMarkConsumed(PoolTestBase):
     def test_consumed_sets_status_and_digest_date(self):

@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """全文提取器单测：fixture HTML，不联网。"""
 import unittest
+from pathlib import Path
+from unittest.mock import patch
+from types import SimpleNamespace
+from hashlib import sha256
+from datetime import datetime
 
 from app.extract import extract_article
+
+READER_FIXTURES = Path(__file__).parent / "fixtures" / "reader_articles"
 
 FIXTURE = """<html><head><title>Training a 4B model | Rohan Bansal</title>
 <meta name="author" content="Rohan Bansal">
@@ -398,6 +405,285 @@ class TestLanguage(unittest.TestCase):
         from app.extract import is_mostly_chinese
         self.assertFalse(is_mostly_chinese("RL can teach small models to rewrite SQL."))
         self.assertFalse(is_mostly_chinese(""))
+
+
+class TestReaderBlocks(unittest.TestCase):
+    def fixture(self, name):
+        return (READER_FIXTURES / name).read_text(encoding="utf-8")
+
+    def test_verified_body_beats_article_shell(self):
+        r = extract_article(self.fixture("freecodecamp.html"))
+        self.assertIn("Body-only sentence", r["text"])
+        for noise in ("Outer advertisement", "Article shell furniture", "biography"):
+            self.assertNotIn(noise, r["text"])
+        self.assertEqual(r.get("method"), "site_selector")
+        self.assertEqual(r["author"], "Ada Reader")
+
+    def test_heading_and_ordered_items_survive(self):
+        r = extract_article(self.fixture("freecodecamp.html"))
+        blocks = r.get("blocks", [])
+        self.assertTrue(any(b["kind"] == "heading" and b["text"] == "Compare equal workloads" for b in blocks))
+        items = [b for b in blocks if b["kind"] == "list_item"]
+        self.assertEqual([b["text"] for b in items], ["Hold the number of messages fixed.", "Measure the same transport."])
+        self.assertEqual([b.get("ordinal") for b in items], [1, 2])
+
+    def test_links_keep_targets(self):
+        r = extract_article(self.fixture("freecodecamp.html"))
+        link_blocks = [b for b in r.get("blocks", []) if b.get("links")]
+        self.assertTrue(link_blocks)
+        self.assertIn({"text": "original measurement", "url": "https://example.org/paper"}, link_blocks[0]["links"])
+        self.assertIn("https://example.org/paper", r["text"])
+
+    def test_code_indentation_is_preserved(self):
+        r = extract_article('<article><pre><code>if ok:\n    run()\n</code></pre></article>')
+        code = [b for b in r.get("blocks", []) if b["kind"] == "code"]
+        self.assertEqual(len(code), 1)
+        self.assertEqual(code[0]["text"], "if ok:\n    run()\n")
+
+    def test_math_tex_and_figure_caption_survive(self):
+        r = extract_article(self.fixture("freecodecamp.html"))
+        self.assertIn("T = L + n c", r["text"])
+        self.assertTrue(any(b["kind"] == "formula" and "T = L + n c" in b["text"] for b in r.get("blocks", [])))
+        self.assertTrue(any(b["kind"] == "caption" and b["text"].startswith("Figure 1:") for b in r.get("blocks", [])))
+
+    def test_mathml_without_tex_keeps_token_boundaries(self):
+        r = extract_article('<article><math><mi>x</mi><mo>=</mo><mi>a</mi><mo>+</mo><mi>b</mi></math></article>')
+        formulas = [b for b in r.get("blocks", []) if b["kind"] == "formula"]
+        self.assertEqual([b["text"] for b in formulas], ["x = a + b"])
+
+    def test_table_cells_keep_row_boundaries(self):
+        r = extract_article(self.fixture("freecodecamp.html"))
+        tables = [b for b in r.get("blocks", []) if b["kind"] == "table"]
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(tables[0].get("rows"), [["Strategy", "Latency (ms)"], ["One batch", "12"], ["Two calls", "22"]])
+        self.assertIn("One batch\t12", tables[0]["text"])
+        self.assertTrue(any(b["kind"] == "caption" and b["text"] == "Controlled latency measurement" for b in r["blocks"]))
+
+    def test_block_ids_are_stable_and_unique(self):
+        first = extract_article(self.fixture("freecodecamp.html"))
+        second = extract_article(self.fixture("freecodecamp.html"))
+        self.assertTrue(first.get("blocks"))
+        self.assertEqual(first["blocks"], second["blocks"])
+        ids = [b["id"] for b in first["blocks"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(b["kind"] and isinstance(b["text"], str) for b in first["blocks"]))
+
+    def test_raw_html_length_does_not_select_noisy_article(self):
+        html = '<article><script>' + 'tracker;' * 3000 + '</script><div class="advertisement">Ad</div></article><article><h1>Reasoning</h1><p>Real method uses a fixed connection cost.</p></article>'
+        r = extract_article(html)
+        self.assertIn("Real method", r["text"])
+        self.assertNotIn("Ad", r["text"])
+
+    def test_void_and_misnested_tags_do_not_swallow_body(self):
+        r = extract_article('<article><img class="banner" src="ad.png"><p>Before<br/>line.</p><div class="comments"><p>Noise<img src="x"></div><p>After evidence.</p></article>')
+        self.assertIn("Before", r["text"])
+        self.assertIn("After evidence", r["text"])
+        self.assertNotIn("Noise", r["text"])
+
+    def test_short_full_argument_is_retained_with_signal(self):
+        r = extract_article('<article><p>Batching amortizes one setup cost over n messages, so the per-message setup cost is L/n when the workload is fixed.</p></article>')
+        self.assertIn("L/n", r["text"])
+        self.assertIn("short_text", r.get("issues", []))
+        self.assertNotIn("fulltext_required", r["issues"])
+
+    def test_login_shell_is_not_substantive(self):
+        r = extract_article('<body><form>请登录后阅读</form></body>')
+        self.assertFalse(r["text"].strip())
+        self.assertIn("login_required", r.get("issues", []))
+
+    def test_empty_shell_has_explicit_issue(self):
+        r = extract_article('<html><body><div id="app"></div></body></html>')
+        self.assertEqual(r["text"], "")
+        self.assertIn("empty_content", r.get("issues", []))
+
+    def test_arxiv_html_preserves_methods_and_results(self):
+        r = extract_article(self.fixture("arxiv_full.html"))
+        self.assertIn("Compare one batch to eight separate calls", r["text"])
+        self.assertIn("saves seven setup costs", r["text"])
+        self.assertEqual(r.get("method"), "site_selector")
+        for issue in ("abstract_only", "missing_method", "missing_support", "fulltext_required"):
+            self.assertNotIn(issue, r.get("issues", []))
+        self.assertEqual(r.get("publication_status"), "preprint")
+
+    def test_abstract_landing_page_requires_fulltext(self):
+        r = extract_article(self.fixture("paper_abstract.html"))
+        self.assertIn("includes no methods", r["text"])
+        self.assertIn("abstract_only", r.get("issues", []))
+        self.assertIn("fulltext_required", r.get("issues", []))
+        self.assertEqual(r.get("publication_status"), "unknown")
+
+    def test_incomplete_paper_identifies_missing_support(self):
+        r = extract_article('<article class="ltx_document"><section class="ltx_section"><h2>Methods</h2><p>We compare two fixed workloads.</p></section></article>')
+        self.assertIn("missing_support", r.get("issues", []))
+        self.assertIn("fulltext_required", r.get("issues", []))
+
+    def test_theoretical_paper_accepts_derivation_as_support(self):
+        r = extract_article('<article class="ltx_document"><section class="ltx_section"><h2>Assumptions</h2><p>Assume latency is constant.</p></section><section class="ltx_section"><h2>Proof</h2><p>Divide the fixed latency by the number of messages to obtain L/n.</p></section></article>')
+        self.assertTrue(r.get("blocks"))
+        self.assertNotIn("missing_support", r.get("issues", []))
+        self.assertNotIn("fulltext_required", r.get("issues", []))
+
+    def test_missing_referenced_table_is_flagged(self):
+        r = extract_article('<article class="ltx_document"><h2>Methods</h2><p>Compare equal workloads.</p><h2>Results</h2><p>See Table 1 for the measured outcomes.</p></article>')
+        self.assertIn("missing_support", r.get("issues", []))
+        self.assertIn("fulltext_required", r.get("issues", []))
+
+    def test_truncated_capture_is_flagged_without_invented_blocks(self):
+        from app import extract
+        with patch.object(extract, "EXTRACT_CAP", 40):
+            r = extract_article('<article><p>' + 'x' * 60 + '</p><p>Unavailable result.</p></article>')
+        self.assertEqual(len(r["text"]), 40)
+        self.assertIn("truncated", r.get("issues", []))
+        self.assertIn("fulltext_required", r.get("issues", []))
+        self.assertEqual("\n\n".join(b["text"] for b in r.get("blocks", [])), r["text"])
+        self.assertNotIn("Unavailable", str(r["blocks"]))
+
+    def test_unclosed_article_reports_incomplete_capture(self):
+        r = extract_article('<article><h2>Methods</h2><p>A captured prefix')
+        self.assertIn("truncated", r.get("issues", []))
+        self.assertIn("fulltext_required", r.get("issues", []))
+
+    def test_paper_title_is_not_a_result_section(self):
+        r = extract_article('<article class="ltx_document"><h1>An analysis of batching</h1><h2>Methods</h2><p>Keep workload fixed.</p></article>')
+        self.assertIn("missing_support", r["issues"])
+
+    def test_empty_methods_heading_is_not_evidence(self):
+        r = extract_article('<article class="ltx_document"><h2>Methods</h2><h2>Results</h2><p>Observed latency was lower.</p></article>')
+        self.assertIn("missing_method", r["issues"])
+        self.assertIn("fulltext_required", r["issues"])
+
+    def test_generic_article_excludes_main_shell_prose(self):
+        r = extract_article('<main><p>Outside article page copy ' + 'noise ' * 100 + '</p><article><h1>Latency</h1><p>Inside article method pays setup once.</p></article></main>')
+        self.assertIn("Inside article", r["text"])
+        self.assertNotIn("Outside article", r["text"])
+
+    def test_optional_paragraph_end_preserves_following_heading(self):
+        r = extract_article('<article><p>First argument.<h2>Result</h2><p>Second argument.</article>')
+        self.assertTrue(any(b["kind"] == "heading" and b["text"] == "Result" for b in r["blocks"]))
+
+    def test_mathml_fraction_structure_is_preserved(self):
+        r = extract_article('<article><math><mfrac><mi>L</mi><mi>n</mi></mfrac></math></article>')
+        formula = next(b for b in r["blocks"] if b["kind"] == "formula")
+        self.assertIn("<mfrac>", formula.get("mathml", ""))
+        self.assertIn("(L)/(n)", formula["text"])
+
+    def test_mathjax_tex_script_is_not_dropped_as_tracking(self):
+        r = extract_article('<article><p>Setup cost follows.</p><script type="math/tex; mode=display">L/n</script><script>analytics.fire()</script></article>')
+        self.assertIn("L/n", r["text"])
+        self.assertTrue(any(b["kind"] == "formula" for b in r["blocks"]))
+        self.assertNotIn("analytics", r["text"])
+
+    def test_nested_figure_pixels_are_unverified_support(self):
+        r = extract_article('<article class="ltx_document"><h2>Methods</h2><p>Fixed workload.</p><h2>Results</h2><p>Figure 1 reports the outcomes.</p><figure><div><img src="plot.png"></div><figcaption>Figure 1: measured latency.</figcaption></figure></article>')
+        self.assertIn("critical_figure_missing", r["issues"])
+        self.assertIn("fulltext_required", r["issues"])
+        self.assertTrue(any(b["kind"] == "caption" for b in r["blocks"]))
+
+    def test_caption_alone_is_not_a_captured_critical_chart(self):
+        r = extract_article('<article class="ltx_document"><h2>Methods</h2><p>Fixed workload.</p><h2>Results</h2><p>Figure 1 reports measured outcomes.</p><figure><figcaption>Figure 1: latency comparison.</figcaption></figure></article>')
+        self.assertIn("critical_figure_missing", r["issues"])
+        self.assertIn("fulltext_required", r["issues"])
+
+    def test_login_prompt_with_title_is_still_a_shell(self):
+        r = extract_article('<article><h1>A gated paper</h1><form>Sign in to read the full article</form></article>')
+        self.assertEqual(r["text"], "")
+        self.assertIn("login_required", r["issues"])
+
+    def test_login_words_inside_full_argument_do_not_erase_it(self):
+        r = extract_article('<article><h1>Access control</h1><p>A short prompt may say sign in to read the documentation.</p><p>The mechanism checks a session before resolving a protected object, and authorization still needs to be evaluated on every request regardless of transport reuse.</p><pre>check_permission(user, object_id)</pre></article>')
+        self.assertIn("authorization still", r["text"])
+        self.assertNotIn("login_required", r["issues"])
+
+    def test_pdf_download_landing_page_requires_fulltext(self):
+        r = extract_article('<main><h1>A paper</h1><p><a href="https://example.org/paper.pdf">Download full paper</a></p></main>')
+        self.assertIn("fulltext_required", r["issues"])
+        self.assertIn("pdf_fulltext_required", r["issues"])
+
+    def test_pdf_citation_does_not_invalidate_complete_short_argument(self):
+        r = extract_article('<article><p>Under fixed connection latency, batching shares setup cost among messages and yields L/n per message.</p><p><a href="https://example.org/paper.pdf">Supporting paper</a></p></article>')
+        self.assertNotIn("fulltext_required", r["issues"])
+
+    def test_nested_list_inside_layout_wrapper_survives(self):
+        r = extract_article('<article><ul><li>Outer condition<div><ol><li>Nested measurement</li></ol></div></li></ul></article>')
+        items = [b for b in r["blocks"] if b["kind"] == "list_item"]
+        self.assertEqual([b["text"] for b in items], ["Outer condition", "Nested measurement"])
+        self.assertEqual([b.get("depth") for b in items], [0, 1])
+
+    def test_formula_structure_inside_table_cell_survives(self):
+        r = extract_article('<article><table><tr><td>Cost</td><td><math><mfrac><mi>L</mi><mi>n</mi></mfrac></math></td></tr></table></article>')
+        table = next(b for b in r["blocks"] if b["kind"] == "table")
+        self.assertEqual(table["rows"], [["Cost", "(L)/(n)"]])
+        self.assertTrue(any("<mfrac>" in f.get("mathml", "") for f in table.get("formulas", [])))
+
+
+class TestReaderFetch(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(patch.stopall)
+        patch("requests.sessions.Session.request", side_effect=AssertionError("offline test forbids network")).start()
+
+    def fetch(self, html, **kwargs):
+        from app.extract import fetch_article
+        response = SimpleNamespace(text=html, content=html.encode("utf-8"), headers={"Content-Type": "text/html"})
+        with patch("app.fetcher.http_get", return_value=response):
+            return fetch_article("https://example.org/article", **kwargs)
+
+    def test_fetch_keeps_short_argument_and_attaches_source_metadata(self):
+        r = self.fetch('<article><p>One setup cost shared by n messages gives L/n under a fixed workload.</p></article>')
+        self.assertIsNotNone(r)
+        self.assertEqual(r.get("url"), "https://example.org/article")
+        self.assertEqual(r.get("source_hash"), sha256(r["text"].encode("utf-8")).hexdigest())
+        self.assertIsNotNone(datetime.fromisoformat(r["fetched_at"]).tzinfo)
+        self.assertIsNone(r["published_at"])
+        self.assertEqual(r.get("publication_status"), "unknown")
+
+    def test_page_date_is_used_without_crawl_date_guessing(self):
+        r = self.fetch('<html><head><meta content="2026-10-01T03:00:00+00:00" property="article:published_time"></head><body><article><p>A technical statement.</p></article></body></html>')
+        self.assertIsNotNone(r)
+        self.assertEqual(r.get("published_at"), "2026-10-01T03:00:00+00:00")
+        self.assertNotEqual(r["published_at"], r["fetched_at"])
+
+    def test_arxiv_date_metadata_is_normalized(self):
+        r = self.fetch((READER_FIXTURES / "arxiv_full.html").read_text(encoding="utf-8"))
+        self.assertIsNotNone(r)
+        self.assertEqual(r.get("published_at"), "2026-10-01")
+
+    def test_invalid_date_remains_unknown(self):
+        r = self.fetch('<head><meta property="article:published_time" content="not-a-date"></head><article><p>Measured condition.</p></article>')
+        self.assertIsNotNone(r)
+        self.assertIsNone(r.get("published_at"))
+
+    def test_publication_status_requires_metadata_support(self):
+        r = self.fetch('<head><meta name="publication_status" content="technical_report"></head><article><p>A measured technical report.</p></article>')
+        self.assertIsNotNone(r)
+        self.assertEqual(r.get("publication_status"), "technical_report")
+
+    def test_pdf_is_not_fed_to_html_parser(self):
+        from app.extract import fetch_article
+        from app import extract
+        response = SimpleNamespace(content=b"%PDF-1.7\nnot HTML", text="%PDF-1.7", headers={"Content-Type": "application/pdf"})
+        with patch("app.fetcher.http_get", return_value=response), patch.object(extract, "extract_article", side_effect=AssertionError("PDF is not HTML")):
+            r = fetch_article("https://example.org/paper.pdf")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["text"], "")
+        self.assertIn("fulltext_required", r["issues"])
+        self.assertEqual(r.get("method"), "pdf_unsupported")
+
+    def test_pdf_magic_overrides_misleading_content_type(self):
+        from app.extract import fetch_article
+        response = SimpleNamespace(content=b"%PDF-1.7\nnot HTML", text="%PDF-1.7", headers={"Content-Type": "text/html"})
+        with patch("app.fetcher.http_get", return_value=response):
+            r = fetch_article("https://example.org/download")
+        self.assertIsNotNone(r)
+        self.assertIn("fulltext_required", r.get("issues", []))
+        self.assertEqual(r.get("method"), "pdf_unsupported")
+
+    def test_non_html_response_is_an_explicit_failure(self):
+        from app.extract import fetch_article
+        response = SimpleNamespace(content=b'{"message":"login"}', text='{"message":"login"}', headers={"Content-Type": "application/json"})
+        with patch("app.fetcher.http_get", return_value=response):
+            r = fetch_article("https://example.org/article")
+        self.assertEqual(r["text"], "")
+        self.assertIn("unsupported_content_type", r["issues"])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import requests
 
 from app.config import BASE_DIR, settings
+from app.reader_article import MAX_PUBLICATION_CHARS
 
 log = logging.getLogger("tech-digest")
 
@@ -25,7 +26,7 @@ log = logging.getLogger("tech-digest")
 # 容器无宿主机端口映射（docker port 为空），只能走容器 IP —— 由 _base() 动态解析。
 DEFAULT_MARKET_BASE = "http://172.18.0.5:8080"
 # posts.ptext varchar(10000)，内容留余量
-MAX_CONTENT_CHARS = 9000
+MAX_CONTENT_CHARS = MAX_PUBLICATION_CHARS
 # pcomments.pctext varchar(3000)，评论留余量
 MAX_COMMENT_CHARS = 2800
 # docker 自定义 bridge 网段（172.16-172.31）；只有指向该网段的 base 才参与漂移自愈，

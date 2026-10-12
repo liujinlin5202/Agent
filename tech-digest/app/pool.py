@@ -228,6 +228,9 @@ class PoolStore:
 
         空池返回 []——调用方据此回退老路径，永不因池空停刊（D6）。
         """
+        from app.daily_ai import excluded_candidate
+        if limit <= 0:
+            return []
         window = window_days or settings.pool_ttl_days
         cutoff = (datetime.now() - timedelta(days=window)).isoformat()
         rows = self.conn.execute(
@@ -244,12 +247,16 @@ class PoolStore:
             scored.append((score, r))
         scored.sort(key=lambda p: -p[0])
         out = []
-        for score, r in scored[:limit]:
+        for score, r in scored:
             it = json.loads(r["raw"])
+            if excluded_candidate(it):
+                continue
             it["_pool_url"] = r["url"]
             it["_pool_id"] = r["id"]
             it["_pool_score"] = round(score, 1)
             out.append(it)
+            if len(out) >= limit:
+                break
         return out
 
     def latest_trending(self, limit: int = 15,

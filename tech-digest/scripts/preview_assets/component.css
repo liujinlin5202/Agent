@@ -1,0 +1,133 @@
+
+.katex-html {
+  display: none;
+}
+
+.markdown-body {
+  color: var(--color-text);
+  /* 与卡片底色一致：勿再铺一层 page 灰底，避免正文区「加深一块」 */
+  background-color: transparent;
+}
+
+.markdown-body--chat {
+  background-color: transparent;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.markdown-body--chat p {
+  margin: 0.35em 0;
+  text-indent: 0 !important;
+}
+
+.markdown-body--chat p:first-child {
+  margin-top: 0;
+}
+
+.markdown-body--chat p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body--chat p:empty {
+  display: none;
+  margin: 0;
+}
+
+/*
+ * 表格：github-markdown-light 固定浅色行底，若继承 body 的浅色字（暗色主题）会看不清。
+ * 这里强制「深字 + 浅底 + 清晰边框」，在聊天气泡与帖子页均可读。
+ */
+.markdown-body table {
+  color: #1f2328;
+  border-color: #d1d9e0;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  padding: 6px 12px;
+  color: #1f2328;
+  background-color: #ffffff;
+  border: 1px solid #c9d1d9;
+}
+
+.markdown-body table th {
+  font-weight: 600;
+  background-color: #eff2f5;
+}
+
+.markdown-body table tbody tr:nth-child(even td) {
+  background-color: #f6f8fa;
+}
+
+.markdown-body table tbody tr:nth-child(even th) {
+  background-color: #f6f8fa;
+}
+
+.markdown-body .md-mention {
+  color: #0969da;
+  font-weight: inherit;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.markdown-body .md-mention--link {
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.markdown-body .md-code-block {
+  position: relative;
+  margin: 10px 0;
+}
+
+.markdown-body .md-code-block pre {
+  margin: 0;
+  padding: 10px 12px 10px;
+  padding-top: 36px;
+  position: relative;
+  overflow: auto;
+}
+
+.markdown-body .md-code-block__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.35);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: rgba(15, 23, 42, 0.55);
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #fff;
+  }
+}
+
+.markdown-body .md-code-block__copy-icon {
+  flex-shrink: 0;
+}
+
+.markdown-body .md-code-block pre code {
+  display: block;
+}

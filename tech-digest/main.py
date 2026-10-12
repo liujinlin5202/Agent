@@ -4,9 +4,9 @@
 用法:
   python main.py ingest                 # 高频抓取入池（每 2h 一班，零 LLM；编辑部 M1）
   python main.py ingest --dry-run       # 跑完整抓取/查重链路但零写池（门禁用）
-  python main.py daily                  # 每天 1 篇爆文（全文转载或 AI 导读）→ 落盘 + 发帖
-  python main.py daily --dry-run        # 日报：渲染落盘但不发帖、不写库（token 校验到为止）
-  python main.py daily --force          # 同日重复触发也重新执行（已发帖则不重发）
+  python main.py daily                  # 单篇研究学习文章，经审核与最终检查后落盘、发帖
+  python main.py daily --dry-run        # 审核通过后落盘，仍有日志/清理/采样及 token 校验
+  python main.py daily --force          # 未发布快照允许重试；已发布则立即退出
   python main.py daily --private        # 日报作为私密帖发布（默认公开帖）
   python main.py star                   # 周六 GitHub 星榜专帖（Top15 全量，不折叠）
   python main.py star --dry-run / --force / --private
@@ -16,11 +16,12 @@
 编辑部 M1（2026-10-08，计划与决策留底见 docs/EDITORIAL_PLAN.md 与
 docs/superpowers/plans/2026-10-08-editorial-m1-content-pool.md）：
   · ingest 每 2h 抓全源入池（content pool，SQLite pool_items 表，零 LLM）
-  · daily 取材改为池内全窗口粗排 top24（池空/池故障自动回退「即时抓取」老路径，
-    永不因池空停刊）；发帖成功后该候选标 daily_used（digest_date 留反馈环接口）
+  · daily 优先池内全窗口粗排 top24，池空/池故障则即时抓取候选，两者均进入
+    research-v1 pipeline；生成或审核失败跳过，不使用旧转载/摘要路径补位。
+    独立最终检查通过后才存正式稿，确认新发布成功后才标 daily_used。
   · star 取 trending 池的「最新一班」（48h 内）；空则回退即时抓取
 
-v4（2026-09-17 用户决策）：
+v4 历史（2026-09-17；日报内容路径现已由 research-v1 取代）：
   · 日报从「3-4 条摘要 + 折叠星榜」改为「每天只挑 1 篇爆点文章」——
     时效性×影响性×学生相关性，AI 挑 1，全文直接搬运（英文 AI 翻译成中文），
     前面写「转载自 xxx」；抓不到全文的（知乎/公众号系反爬）降级 AI 深度导读+链接。
@@ -35,13 +36,16 @@ TECH_DIGEST_WEEKEND_PUBLISH=1 可打开）。星榜帖只在周六发（不受�
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 from logging.handlers import RotatingFileHandler
+from uuid import uuid4
 
-from app import daily_ai, dedup, editorial, extract, marketdb, preference, titles
+from app import daily_ai, dedup, editorial, extract, marketdb, preference, publication_gate, titles
 from app.config import settings
 from app.digest import headline_of, render_repost, render_star_post
 from app.dedup import normalize_url
@@ -144,8 +148,8 @@ def run_ingest(dry_run: bool = False) -> int:
 def _pool_daily_materials() -> tuple[list[dict], list[dict]] | None:
     """daily 的池模式取材（D6）：(粗排候选, 最近 trending 快照)。
 
-    空池返回 None、池故障打日志后返回 None——调用方一律回退「即时抓取」老路径，
-    永不因池空停刊。
+    空池返回 None、池故障打日志后返回 None——调用方即时抓取候选，
+    然后进入相同的研究文章 pipeline 与最终检查。
     """
     ps = None
     try:
@@ -203,7 +207,7 @@ def _mark_pool_consumed(item: dict, day: str) -> None:
         log.warning("池消费标记失败（不影响发帖）: %s", e)
 
 
-# ---------------- daily（v4：每天 1 篇爆文） ----------------
+# ---------------- daily（research-v1：单篇研究学习文章） ----------------
 
 def _daily_candidates(news: list[dict]) -> list[dict]:
     """v4.5 候选池（10 源）：知乎热榜 → HN → sspai → devto → 订阅/见闻轮转，上限 48。
@@ -388,23 +392,26 @@ def _publish_allowed(day: str) -> bool:
         return True
 
 
-def _verify_published(store: Store, task: str, post_id: int | None, title: str) -> None:
+def _verify_published(store: Store, task: str, post_id: int | None, title: str) -> int | None:
     """发帖后只读回读：确认帖子真的公开可见（2026-09-20 星榜帖 #6311 被写私密事故）。
 
     观测动作，绝不影响发帖结果：发帖此时已成功、幂等标记已写，定位不到/库不可用/
     任何异常都只记日志，绝不因此重发。postID 未返回（后端 data=nil）时按
     「本人 + 标题 + 10 分钟时间窗」从库里捞回（marketdb.find_post_id 同款口径）。
+    返回有效 postID；可见性未知、私密或校验异常不丢弃已确认的帖子身份。
     """
     try:
-        if not post_id:
+        if isinstance(post_id, bool) or not isinstance(post_id, int) or post_id <= 0:
+            post_id = None
             uid = marketdb.user_id_of(settings.market_user_telephone or "")
             since = datetime.now() - timedelta(minutes=10)
             post_id = marketdb.find_post_id(uid, title, since) if uid else None
-        if not post_id:
+        if isinstance(post_id, bool) or not isinstance(post_id, int) or post_id <= 0:
+            post_id = None
             store.log(task, "degraded", {"detail": "publish_verify",
                                          "reason": "post_not_located"})
             log.error("回读校验：%s 帖无法定位（postID 未返回且库中查不到），公开性未知", task)
-            return
+            return None
         private = marketdb.post_is_private(post_id)
         if private is None:
             log.warning("回读校验：集市库不可用，帖 %s 可见性未知", post_id)
@@ -416,31 +423,32 @@ def _verify_published(store: Store, task: str, post_id: int | None, title: str) 
             log.info("回读校验通过：帖 %s 公开可见", post_id)
     except Exception as e:  # noqa: BLE001 —— 校验绝不能弄崩已成功的发帖
         log.warning("回读校验异常（忽略）: %s", e)
+    return post_id
 
 
 def _publish_md(store: Store, task: str, day: str, title: str, md: str,
-                dry_run: bool, private: bool = False) -> None:
-    """通用发帖（幂等：已发过不重发；失败重试 ≤1 次）。task: daily | star。"""
-    from app import publisher  # 延迟导入：无 key 环境不依赖发帖配置
+                dry_run: bool, private: bool = False, content_meta: dict | None = None) -> bool:
+    """只有本次新发布获成功确认才返回 True；跳过、预览及失败均为 False。"""
     if task == "daily" and not _publish_allowed(day):
         store.log(task, "skipped", {"detail": "weekend", "day": day})
         log.info("周末只抓取入库、不发帖（数据仍进周报池）：%s 跳过发帖", day)
-        return
+        return False
     if not settings.daily_publish:
         store.log(task, "degraded",
                   {"detail": "publish", "reason": "TECH_DIGEST_DAILY_PUBLISH=0"})
         log.info("发帖已关闭（TECH_DIGEST_DAILY_PUBLISH=0），仅落盘")
-        return
+        return False
     if not settings.market_refresh_token or not settings.market_user_telephone:
         store.log(task, "degraded",
                   {"detail": "publish", "reason": "未配置 MARKET_REFRESH_TOKEN/TELEPHONE"})
         log.warning("未配置发帖凭据，仅落盘")
-        return
+        return False
     posted = store.is_daily_posted(day) if task == "daily" else store.is_star_posted(day)
     if posted:
         store.log(task, "skipped", {"detail": "publish_dup"})
         log.info("今日已发布过（meta 标记），--force 重跑不重发")
-        return
+        return False
+    from app import publisher  # 延迟导入：所有跳过分支均无需发帖模块
     if dry_run:
         auth = publisher.refresh_access_token()
         if auth:
@@ -449,24 +457,49 @@ def _publish_md(store: Store, task: str, day: str, title: str, md: str,
         else:
             store.log(task, "degraded", {"detail": "publish", "reason": "dry_run_token_fail"})
             log.error("dry-run: token 校验失败")
-        return
+        return False
     for attempt in (1, 2):
         post_id, url, err = publisher.publish_md(title, md, private=private)
         if err is None:
             if task == "daily":
                 store.mark_daily_posted(day, post_id or 0)
+                published_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 store.set_daily_title(day, title)
             else:
                 store.mark_star_posted(day, post_id or 0)
-            store.log(task, "ok", {"detail": "published", "post_id": post_id,
-                                   "post_url": url, "title": title})
+            detail = {"detail": "published", "post_id": post_id,
+                      "post_url": url, "title": title}
+            if task == "daily":
+                detail.update(published_at=published_at,
+                              time_basis="local_confirmation")
+                if content_meta is not None:
+                    detail.update(content_version="research-v1",
+                                  article_type=content_meta.get("article_type"),
+                                  learning_question=content_meta.get("learning_question"),
+                                  title_hash=sha256(title.encode("utf-8")).hexdigest(),
+                                  body_hash=sha256(md.encode("utf-8")).hexdigest(),
+                                  word_count=len(md),  # 契约口径：最终 Markdown 字符数
+                                  evidence_count=content_meta.get("evidence_count", 0))
+                    for key in ("source_hash", "draft_hash"):
+                        if content_meta.get(key):
+                            detail[key] = content_meta[key]
+            if task != "daily":
+                store.log(task, "ok", detail)
             log.info("%s 已发布: postID=%s %s", task, post_id or "(未返回)", url or "")
             if not private:  # 有意发私密（预览）不用回读
-                _verify_published(store, task, post_id, title)
-            return
+                resolved_id = _verify_published(store, task, post_id, title)
+                if task == "daily" and not post_id and isinstance(resolved_id, int) \
+                        and not isinstance(resolved_id, bool) and resolved_id > 0:
+                    detail["post_id"] = resolved_id
+                    store.mark_daily_posted(day, resolved_id)
+            if task == "daily":
+                # 原确认时间及内容哈希在回读前捕获，成功日志仅写一次。
+                store.log(task, "ok", detail)
+            return True
         log.warning("%s 发帖第 %d 次失败: %s", task, attempt, err)
         if attempt == 2:
             store.log(task, "degraded", {"detail": "publish", "error": err})
+    return False
 
 
 def _sample_views(store: Store) -> None:
@@ -493,153 +526,122 @@ def _sample_views(store: Store) -> None:
         log.warning("表现采样失败（忽略，不影响发帖）: %s", e)
 
 
+def _daily_publication_decision(result) -> dict:
+    """生产者 ready 与独立验证的 ready 必须同时满足。"""
+    packet = result if isinstance(result, dict) else {}
+    try:
+        decision = publication_gate.decide_publication(
+            packet.get("title"), packet.get("markdown"), packet.get("draft"),
+            packet.get("source_packet"), packet.get("review"))
+    except Exception as exc:
+        return {"status": "generation_error", "reasons": ["publication_gate_error", str(exc)[:200]]}
+    reasons = packet.get("reasons")
+    reasons = [r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else []
+    if not isinstance(decision, dict) or decision.get("status") not in ("ready", "skip_quality", "generation_error"):
+        return {"status": "generation_error", "reasons": reasons + ["invalid_gate_result"]}
+    reasons += decision.get("reasons", [])
+    producer_status = packet.get("status")
+    if producer_status not in ("ready", "skip_quality", "generation_error"):
+        return {"status": "generation_error", "reasons": reasons + ["invalid_pipeline_result"]}
+    if producer_status != "ready":
+        return {"status": producer_status, "reasons": reasons}
+    if any(not isinstance(packet.get(k), dict) for k in ("draft", "source_packet", "item")) \
+            or any(not isinstance(packet.get(k), str) or not packet[k].strip() for k in ("title", "markdown")):
+        return {"status": "generation_error", "reasons": reasons + ["malformed_ready_result"]}
+    return {**decision, "reasons": reasons}
+
+
+def _save_daily_draft(day: str, result, decision: dict):
+    """拒稿仅保存在独立草稿目录，不占用正式日期快照或期数。"""
+    drafts = settings.output_dir / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = drafts / f"{day}-{stamp}-{uuid4().hex}.json"
+    record = {"day": day, "status": decision["status"], "reasons": decision.get("reasons", []), "result": result}
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8", newline="")
+    return path
+
+
 def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
     store = Store()
     try:
         day = date.today().isoformat()
-        if store.daily_exists(day) and not force:
-            store.log("daily", "skipped", {"detail": "dup"})
-            log.info("今日快照已存在，跳过（--force 可重新生成）")
+        # 未发布快照允许重试；已发布时 force 也不能取新候选或标新消费。
+        if store.is_daily_posted(day):
+            store.log("daily", "skipped", {"detail": "publish_dup", "day": day})
             return 0
         skip, reason = should_skip(settings.load_threshold)
         if skip and settings.check_load:
             store.log("daily", "skipped", {"detail": "load", "reason": reason})
-            log.info("负载过高，跳过本次: %s", reason)
             return 0
-        t0 = time.monotonic()
-        material = _pool_daily_materials()
-        pool_mode = material is not None
-        if material:
-            # 池模式（M1）：候选来源=池内全窗口粗排 top24（D4/D6），排序已在池里
-            # 完成，不再过 _daily_candidates 的源配额（那是即时抓取时代的多样性
-            # 手工活，gate 的源轮转试抓继续保证多样性）
-            news, trending = material
-            dedup_info = {"removed": []}
-            stats = {}
-            elapsed = time.monotonic() - t0
-        else:
-            items, stats = fetch_all()
-            elapsed = time.monotonic() - t0
-            trending = [it for it in items if it["type"] == "trending"]
-            news_raw = [it for it in items if it["type"] == "news"]
-            news, dedup_info = dedup.dedupe_news(news_raw, _dedup_history(store, day))
-        dedup_removed = len(dedup_info["removed"])
-
-        pref = preference.load_preference()
-        if pref.active:
-            log.info("倾向模式: prefer（%s…）", pref.text[:30])
-        else:
-            log.info("倾向模式: 默认")
-        candidates = news if pool_mode else _daily_candidates(news)
-
-        # M2 编辑部流水线（评委→研究员→作者→终审）：池模式 + 有 key 才进；
-        # 任一关键步整体失败 → 回退 M1 路径（gate + ai_pick），永不因单点停刊
-        has_ai = _has_ai()
-        editorial_result = None
-        if pool_mode and has_ai:
+        started = time.monotonic()
+        news, trending, stats = [], [], {}
+        dedup_info = {"removed": []}
+        pool_mode = False
+        try:
+            material = _pool_daily_materials()
+            pool_mode = material is not None
+            if material is not None:
+                news, trending = material
+            else:
+                items, stats = fetch_all()
+                trending = [it for it in items if it["type"] == "trending"]
+                raw_news = [it for it in items if it["type"] == "news"]
+                news, dedup_info = dedup.dedupe_news(raw_news, _dedup_history(store, day))
+            pref = preference.load_preference()
+            recent = store.recent_daily_titles(7, before_day=day)
+            candidates = news if pool_mode else _daily_candidates(news)
+            result = editorial.run_pipeline(candidates, preference=pref, dry_run=dry_run, recent_titles=recent)
+        except Exception as exc:  # 原文、模型、生成失败均不允许旧内容路径补位
+            result = {"status": "generation_error", "reasons": ["pipeline_exception", str(exc)[:200]],
+                      "draft": None, "source_packet": None, "review": None, "attempts": []}
+        decision = _daily_publication_decision(result)
+        if decision["status"] != "ready":
             try:
-                editorial_result = editorial.run_pipeline(candidates, pref,
-                                                          dry_run=dry_run)
-            except Exception as e:  # noqa: BLE001
-                log.warning("编辑部流水线异常（回退 M1 路径）: %s", e)
-                editorial_result = None
-
-        gated: list[dict] = []
-        if editorial_result:
-            pipeline_mode = "editorial"
-            review_d = editorial_result.get("review")
-            pick_d = editorial_result["pick"]
-            pick = pick_d
-            item = pick_d["item"]
-            ai_used = True
-            mode = pick_d["lead_kind"]
-            log.info("编辑部终稿: %s（形态 %s，终审 %.2f）",
-                     item.get("title", "")[:30], mode,
-                     (review_d or {}).get("total", -1))
-        else:
-            pipeline_mode = "legacy"
-            review_d = None
-            gated = _prefetch_gate(candidates)
-            sel = gated or candidates
-            if gated:
-                log.info("可爬性闸门: %d/%d 篇验证可抓全文，AI 只在此池中挑选",
-                         len(gated), len(candidates))
-            elif pool_mode:
-                log.warning("可爬性闸门: 0 篇通过（全军覆没），回退池内全量候选")
-            else:
-                log.warning("可爬性闸门: 0 篇通过（全军覆没），回退全量候选池")
-            item, pick, ai_used = _pick_article(sel, day, pref)
-            if not item:
-                store.log("daily", "error", {"detail": "no_candidates"})
-                log.error("没有任何候选文章（全部源失败/去重清空），不产出日报")
+                draft_path = _save_daily_draft(day, result, decision)
+            except OSError as exc:
+                store.log("daily", "error", {"detail": "generation_error", "reasons": ["draft_write_failed"],
+                                             "error": str(exc)[:200]})
                 return 1
+            status = decision["status"]
+            store.log("daily", "error" if status == "generation_error" else "skipped", {
+                "detail": status, "reasons": decision.get("reasons", []), "draft_path": str(draft_path),
+                "material": "pool" if pool_mode else "live",
+                "attempts": result.get("attempts", []) if isinstance(result, dict) else [],
+            })
+            log.warning("daily %s: %s", status, decision.get("reasons", []))
+            return 1 if status == "generation_error" else 0
 
-            has_ai = _has_ai()
-            body, mode, author = _fetch_body(item, has_ai)
-            why = (pick or {}).get("why", "").strip()
-            digest = (pick or {}).get("digest", "").strip()
-            # lead/lead_kind 契约（见 digest.render_repost）：全文 > AI 导读 > 原文摘要 > 空手
-            if mode == "full":
-                lead, kind = body, "full"
-            elif digest:
-                lead, kind = digest, "digest"
-            elif (item.get("summary") or "").strip():
-                # AI 没参与（无 key / 调用失败）：拿原文摘要顶上，渲染时明示「不是全文」
-                lead, kind = item["summary"].strip(), "summary"
-            else:
-                lead, kind = "", "none"
-            # 知识卡片（v4.1）：AI 失败返回 []，纯装饰不影响发布。
-            # 语境优先级：全文译文 > AI 导读（digest 模式下正文缺席）> 原文摘要
-            glossary = daily_ai.ai_glossary(
-                item.get("title") or "",
-                body or digest or (item.get("summary") or "")) if has_ai else []
-            pick_d = {"item": item, "why": why, "lead": lead, "lead_kind": kind,
-                      "author": author, "glossary": glossary}
-
+        # 独立检查通过后才允许正式文件、快照、期数、清理和发布。
+        # 不重选标题、不重渲染、不添加期数或其他正文：审核字符串原样提交。
+        title, md = result["title"], result["markdown"]
+        draft, source, review, item = (result[k] for k in ("draft", "source_packet", "review", "item"))
         issue_no = store.get_issue_no(day) or store.next_issue_no()
-        recent = store.recent_daily_titles(7, before_day=day)
-        # 兜底标题（发帖标题阶梯全不合格时用）：编辑部模式=选中文章原题清洗；
-        # legacy=候选反查（ai_pick 的 idx 是候选序，编辑部 idx 是 top 序不可复用）
-        if pipeline_mode == "editorial":
-            fb_title = headline_of(item.get("title") or "", "", "")
-        else:
-            fb_title = _fallback_title(pick, gated or candidates)
-        title = _pick_post_title(pick, recent, fb_title)
-        ctx = {"issue_no": issue_no, "pick": pick_d}
-        md = render_repost(day, issue_no, ctx)
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         out = settings.output_dir / f"{day}-daily.md"
-        out.write_text(md, encoding="utf-8")
-        # 快照与期数绑定：只许真跑写库。--dry-run 曾把快照写进库并递增 issue_next
-        # （2026-09-14 实锤），害 09:15 真跑被幂等检查跳过、停更一天——dry-run 必须零写入。
+        out.write_text(md, encoding="utf-8", newline="")
         if not dry_run:
-            store.save_daily_v2(day, news + trending, str(out))
+            issue_no = store.save_daily_v2(day, news + trending, str(out), post_title=title)
         store.cleanup()
-
-        src_errors = {n: s["error"] for n, s in stats.items() if s["error"]}
-        degraded = bool(src_errors) or (has_ai and (not ai_used or mode == "digest"))
-        store.log("daily", "degraded" if degraded else "ok", {
-            "material": "pool" if pool_mode else "live",
-            "pipeline": pipeline_mode,
-            "review_total": (review_d or {}).get("total"),
-            "source_stats": {n: {k: v for k, v in s.items() if k != "detail"}
-                             for n, s in stats.items()},
-            "dedup_removed": dedup_removed,
-            "dedup_detail": dedup_info["removed"][:5],
-            "news": len(news), "trending": len(trending),
-            "issue_no": issue_no, "ai_used": ai_used, "mode": mode,
-            "gate_qualified": len(gated),
-            "pick_title": item.get("title", ""), "title": title,
-            "pref_mode": "prefer" if pref.active else "default",
-            "pref_text": pref.text[:30],
-            "elapsed_s": round(elapsed, 1), **({"errors": src_errors} if src_errors else {}),
+        src_errors = {name: data["error"] for name, data in stats.items() if data.get("error")}
+        store.log("daily", "degraded" if src_errors else "ok", {
+            "material": "pool" if pool_mode else "live", "pipeline": "editorial",
+            "content_version": "research-v1", "article_type": draft["article_type"],
+            "learning_question": draft["learning_question"], "review_score": decision.get("score"),
+            "source_hash": source["source_hash"], "draft_hash": review["draft_hash"],
+            "source_stats": {name: {k: v for k, v in data.items() if k != "detail"} for name, data in stats.items()},
+            "dedup_removed": len(dedup_info["removed"]), "dedup_detail": dedup_info["removed"][:5],
+            "news": len(news), "trending": len(trending), "issue_no": issue_no,
+            "title": title, "dry_run": dry_run, "attempts": result.get("attempts", []),
+            "elapsed_s": round(time.monotonic() - started, 1), **({"errors": src_errors} if src_errors else {}),
         })
-        log.info("daily ok: issue=#%d mode=%s pick=%s 标题=%s -> %s",
-                 issue_no, mode, item.get("title", "")[:30], title or "(空)", out)
-        _publish_md(store, "daily", day, title, md, dry_run, private)
-        # 发帖成功才标消费（D6）：周末不发帖/发布失败/dry-run 都不算消费。
-        # 回退路径发布的文章也要对齐池子——它可能同时在池里挂着 candidate
-        if not dry_run and store.is_daily_posted(day) and item:
+        published = _publish_md(store, "daily", day, title, md, dry_run, private,
+                                content_meta={"article_type": draft["article_type"],
+                                              "learning_question": draft["learning_question"],
+                                              "evidence_count": len(draft["evidence_ids"]),
+                                              "source_hash": source["source_hash"],
+                                              "draft_hash": review["draft_hash"]})
+        if published is True and not dry_run:
             _mark_pool_consumed(item, day)
         _sample_views(store)
         return 0

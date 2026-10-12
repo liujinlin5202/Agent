@@ -1,58 +1,101 @@
 # -*- coding: utf-8 -*-
-"""发帖表现复盘：把 post_views 采样压成「每期一行」，并给出前后对比。
-
-2026-09-13 新增。改内容之前先得能看见效果——日报发了几十期，浏览量一直靠肉眼翻
-数据库，没有「同一口径下这期比上期好还是差」的答案。
-
-口径（与 scripts/content_report.py sample 模式配套）：
-  · daily 09:15 跑 → 给「昨天发的帖」记一次采样，正好是发布后 ~24 小时的浏览数；
-  · h24 取发布次日那次采样，与「当前总浏览」分开看——总浏览含长尾
-    （实测 9/11 那期 h24 只有 46，后来涨到 277），拿总数比会把长尾误当内容效果。
-
-另有一条更早的历史基线（写这份代码时从 `pbrowses` 逐条浏览日志算出来的 h24）：
-9/1-9/5 约 93-135，9/6-9/13 回落到 41-58。但 pbrowses 只记到 browse_num 的
-35%-92%（疑似只记登录用户），**只能当相对参照，不能当准数**——所以正式口径
-用 browse_num 采样，pbrowses 的数只用于回溯改版前的量级。
-"""
+"""离线表现复盘：同窗口快照、当前累计值和历史近似值分别标明口径。"""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from statistics import median
 
 from app.themes import theme_label
 
 _WEEKDAY = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 _MISSING = "—"
+_BASIS = {"h24_window": "21–27h 窗口", "next_day_approximate": "次日近似",
+          "missing": "缺失采样"}
+_TIME_BASIS = {"local_confirmation": "本地确认"}
+_UNAVAILABLE = "曝光：不可用；CTR：不可用；读完率：不可用（无完成事件）。"
 
 
-def report_rows(samples: list[dict], titles: dict[str, str] | None = None) -> list[dict]:
-    """采样明细 → 每期一行。samples 为 Store.view_samples() 的输出。
+def report_rows(samples: list[dict], titles: dict[str | int, str] | None = None,
+                post_meta: dict[int, dict] | None = None) -> list[dict]:
+    """每帖一行，兼容不带发布 metadata 的历史调用。
 
-    h24：发布次日的那次采样（sample_day == 发布日 +1）。缺这次采样 → None，
-    **不是 0**：「没测到」和「24 小时零浏览」是两回事，混起来复盘表会骗人。
-    当前浏览：该期最新一次采样（含长尾）。
+    h24 保留旧字段名：优先从 21–27h 窗口选最接近 24h 的快照，距离相同选
+    较早快照；缺时区或发布时间才回退到次日近似。明确超出窗口不回退。
+    同帖同采样日保留最后一条，与 post_views 的覆盖语义一致。
+    likes/comments/browse 是当前总数；比率只用 h24_* 同一快照的计数。
     """
     titles = titles or {}
-    per: dict[str, dict[str, dict]] = {}
+    post_meta = post_meta or {}
+    per: dict[int, dict[str, dict]] = {}
     for s_ in samples or []:
-        per.setdefault(s_["day"], {})[s_["sample_day"]] = s_
+        per.setdefault(s_["post_id"], {})[s_["sample_day"]] = s_
 
     rows: list[dict] = []
-    for day in sorted(per):
-        snaps = per[day]
-        cur = snaps[max(snaps)]
+    for post_id, snaps in per.items():
+        values = list(snaps.values())
+        day = min(snap["day"] for snap in values)
+        if all(_aware_time(snap.get("sampled_at")) is not None for snap in values):
+            cur = max(values, key=lambda snap: _aware_time(snap["sampled_at"]))
+        else:
+            cur = snaps[max(snaps)]
         d = _parse(day)
-        h24 = snaps.get((d + timedelta(days=1)).isoformat()) if d else None
+        meta = post_meta.get(post_id, {})
+        published = _aware_time(meta.get("published_at"))
+        candidates = [(snap, _age_hours(published, snap)) for snap in values]
+        window = [(snap, age) for snap, age in candidates if age is not None and 21 <= age <= 27]
+        h24, age, basis = None, None, "missing"
+        if window:
+            h24, age = min(window, key=lambda pair: (abs(pair[1] - 24), pair[1]))
+            basis = "h24_window"
+        elif d:
+            next_day = snaps.get((d + timedelta(days=1)).isoformat())
+            if next_day and _age_hours(published, next_day) is None:
+                h24 = next_day
+                basis = "next_day_approximate"
+        views = h24["browse"] if h24 else None
+        likes = h24["likes"] if h24 else None
+        comments = h24["comments"] if h24 else None
         rows.append({
+            "post_id": post_id,
             "day": day,
             "weekday": _WEEKDAY[d.weekday()] if d else "",
             "theme": theme_label(day) if d else "",
-            "title": titles.get(day, ""),
-            "h24": h24["browse"] if h24 else None,
+            "title": titles.get(post_id, titles.get(day, "")),
+            "h24": views,
+            "h24_likes": likes,
+            "h24_comments": comments,
+            "like_rate": likes / views if views and likes is not None else None,
+            "comment_rate": comments / views if views and comments is not None else None,
+            "observation_age_hours": age,
+            "sample_basis": basis,
+            "sampled_at": h24.get("sampled_at") if h24 else None,
+            "published_at": meta.get("published_at"),
+            "time_basis": meta.get("time_basis"),
+            "content_version": meta.get("content_version"),
+            "article_type": meta.get("article_type"),
+            "learning_question": meta.get("learning_question"),
             "browse": cur["browse"],
             "likes": cur["likes"],
             "comments": cur["comments"],
+            "current_sampled_at": cur.get("sampled_at"),
+            "current_observation_age_hours": _age_hours(published, cur),
         })
-    return rows
+    return sorted(rows, key=lambda row: (row["day"], row["post_id"]))
+
+
+def _aware_time(value: str | None) -> datetime | None:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return timestamp if timestamp.utcoffset() is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _age_hours(published: datetime | None, snap: dict) -> float | None:
+    sampled = _aware_time(snap.get("sampled_at"))
+    if published is None or sampled is None:
+        return None
+    return (sampled - published).total_seconds() / 3600
 
 
 def _parse(day: str) -> date | None:
@@ -67,32 +110,71 @@ def _cell(text: str) -> str:
     return (text or "").replace("|", "/").replace("\n", " ").strip()
 
 
+def _value(value) -> str:
+    return _MISSING if value is None else str(value)
+
+
+def _ratio(numerator: int | None, denominator: int | None) -> str:
+    if numerator is None or denominator is None:
+        return _MISSING
+    rate = f"{numerator / denominator:.1%}" if denominator else "不可用"
+    return f"{numerator}/{denominator}（{rate}）"
+
+
 def render_table(rows: list[dict]) -> str:
     """复盘表（Markdown）。"""
     if not rows:
-        return "（暂无采样数据：先跑 `content_report.py sample`）"
-    lines = ["| 日期 | 主题日 | 标题 | h24 浏览 | 当前浏览 | 赞 | 评 |",
-             "|:--|:--|:--|--:|--:|--:|--:|"]
+        return "（暂无采样数据 / 无本地数据）\n\n" + _UNAVAILABLE
+    lines = ["| 日期 | post_id | 历史主题日 | 标题 | 内容版本 | 文章类型 | 学习问题 | 采样依据 | 时间依据 | 实际小时 | 约24h浏览次数 | 同窗口赞/浏览 | 同窗口评/浏览 | 当前浏览次数 | 当前赞 | 当前评 | 当前采样小时 |",
+             "|:--|--:|:--|:--|:--|:--|:--|:--|:--|--:|--:|:--|:--|--:|--:|--:|--:|"]
     for r in rows:
-        h24 = _MISSING if r["h24"] is None else str(r["h24"])
-        lines.append(f"| {r['day'][5:]} {r['weekday']} | {_cell(r['theme']) or _MISSING} "
-                     f"| {_cell(r['title']) or _MISSING} | {h24} | {r['browse']} "
-                     f"| {r['likes']} | {r['comments']} |")
+        age = r.get("observation_age_hours")
+        current_age = r.get("current_observation_age_hours")
+        cells = [f"{r['day'][5:]} {r['weekday']}", _value(r.get("post_id")),
+                 _cell(r["theme"]) or _MISSING, _cell(r["title"]) or _MISSING,
+                 _cell(r.get("content_version")) or "未记录",
+                 _cell(r.get("article_type")) or _MISSING,
+                 _cell(r.get("learning_question")) or _MISSING,
+                 _BASIS.get(r.get("sample_basis"), "次日近似"),
+                 _cell(_TIME_BASIS.get(r.get("time_basis"), r.get("time_basis"))) or "未记录",
+                 f"{age:.1f}" if age is not None else _MISSING, _value(r["h24"]),
+                 _ratio(r.get("h24_likes"), r["h24"]), _ratio(r.get("h24_comments"), r["h24"]),
+                 _value(r["browse"]), _value(r["likes"]), _value(r["comments"]),
+                 f"{current_age:.1f}" if current_age is not None else _MISSING]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines += ["", "h24 字段表示约24h窗口；次日近似缺乏可靠时间差，缺失采样保留为空。浏览次数未确认为去重人数。",
+              _UNAVAILABLE]
     return "\n".join(lines)
 
 
 def summary(rows: list[dict], split: str) -> str:
-    """改版前后 h24 均值对比。split 为改版日（YYYY-MM-DD），前后各取一侧。
-
-    只在两侧都至少有一期「测到 h24」的样本时给结论——样本不足时说样本不足，
-    不拿半截数据下判断（这正是这次要避免的：凭感觉断定「掉了」）。
-    """
-    before = [r["h24"] for r in rows if r["day"] < split and r["h24"] is not None]
-    after = [r["h24"] for r in rows if r["day"] >= split and r["h24"] is not None]
-    if not before or not after:
-        return f"h24 均值对比（改版日 {split}）：样本不足（改版前 {len(before)} 期 / 改版后 {len(after)} 期）"
-    a, b = sum(before) / len(before), sum(after) / len(after)
-    arrow = "↑" if b > a else "↓"
-    pct = abs(b - a) / a * 100 if a else 0.0
-    return (f"h24 均值对比（改版日 {split}）：前 {a:.0f}（{len(before)} 期）"
-            f" → 后 {b:.0f}（{len(after)} 期） {arrow}{pct:.0f}%")
+    """按前后、内容版本、采样依据和时间依据分别描述，不推断因果或完成率。"""
+    lines = [f"表现描述（改版日 {split}）：整体篇数={len(rows)}。"]
+    measured_counts = []
+    for label, side in (("改版前", [r for r in rows if r["day"] < split]),
+                        ("改版后", [r for r in rows if r["day"] >= split])):
+        measured_counts.append(sum(r["h24"] is not None for r in side))
+        groups: dict[tuple[str, str, str], list[dict]] = {}
+        for row in side:
+            key = (row.get("content_version") or "未记录", row.get("sample_basis") or "next_day_approximate",
+                   row.get("time_basis") or "未记录")
+            groups.setdefault(key, []).append(row)
+        if not groups:
+            lines.append(f"{label}：篇数=0，N=0，均值=—，中位数=—。")
+        for (version, basis, time_basis), group in sorted(groups.items()):
+            measured = [r for r in group if r["h24"] is not None]
+            counts = [r["h24"] for r in measured]
+            mean = f"{sum(counts) / len(counts):.1f}" if counts else _MISSING
+            med = f"{median(counts):.1f}" if counts else _MISSING
+            views = sum(counts) if counts else None
+            likes = sum(r["h24_likes"] for r in measured) if measured else None
+            comments = sum(r["h24_comments"] for r in measured) if measured else None
+            lines.append(f"{label} / {_cell(version)} / {_BASIS.get(basis, _cell(basis))} / "
+                         f"{_cell(_TIME_BASIS.get(time_basis, time_basis))}："
+                         f"篇数={len(group)}，N={len(measured)}，缺失={len(group) - len(measured)}，"
+                         f"均值={mean}，中位数={med}，浏览总数={_value(views)}，"
+                         f"赞/浏览={_ratio(likes, views)}，评/浏览={_ratio(comments, views)}，浏览样本={counts}。")
+    if min(measured_counts) < 2:
+        lines.append("样本不足：任一侧不足两篇已测文章，不据此宣称增长成功。")
+    lines += ["历史跨内容定位、版本或采样口径的差异仅作描述；浏览和互动不能代替理解反馈。", _UNAVAILABLE]
+    return "\n".join(lines)

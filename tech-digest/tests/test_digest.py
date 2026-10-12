@@ -2,6 +2,9 @@
 """digest v4 单测：单篇转载渲染（全文/导读两态）+ 周六星榜专帖渲染。"""
 import unittest
 
+from copy import deepcopy
+from app import digest
+
 from app.digest import FULL_CAP, _para_cut, render_repost, render_star_post
 
 HN_ITEM = {"type": "news", "title": "Training a 4B model to produce faster query plans",
@@ -250,6 +253,256 @@ class TestRenderStarPost(unittest.TestCase):
         md = render_star_post("2026-09-19", [_trend(i) for i in range(1, 26)], {})
         self.assertIn("user/repo15", md)
         self.assertNotIn("user/repo16", md)
+
+
+class TestReaderArticle(unittest.TestCase):
+    def render(self, packet):
+        renderer = getattr(digest, "render_reader_article", None)
+        self.assertTrue(callable(renderer), "reader renderer must be implemented")
+        return renderer(packet["draft"], packet["source_packet"])
+
+    def test_reader_preserves_semantic_sections_and_provenance(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        md = self.render(packet)
+        self.assertTrue(md.startswith("## " + packet["draft"]["title"] + "\n\n"))
+        for field in ("opening", "limitation", "takeaway"):
+            self.assertIn(packet["draft"][field], md)
+        for section in packet["draft"]["sections"]:
+            self.assertIn(section["markdown"], md)
+        self.assertIn("技术报告", md)
+        self.assertIn("前置知识", md)
+        self.assertIn("原作者", md)
+        self.assertIn("未独立复现", md)
+        self.assertIn("AI", md)
+        self.assertNotIn("淘汰", md)
+        self.assertNotIn("<details", md)
+        self.assertNotIn("<style", md)
+        self.assertNotIn("预览", md)
+        self.assertLess(md.index("### 核心方法"), md.index("### 证据"))
+        self.assertLess(md.index(packet["draft"]["limitation"]), md.index("\n\n---\n\n"))
+
+    def test_reader_long_code_and_conclusion_are_never_truncated(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        code = "```python\n" + "values = [1, 2, 3]  # 完整代码\n" * 500 + "```"
+        packet["draft"]["sections"][1]["markdown"] += "\n\n" + code
+        md = self.render(packet)
+        self.assertIn(code, md)
+        self.assertIn(packet["draft"]["takeaway"], md)
+        self.assertNotIn("删节", md)
+        self.assertNotIn("<details", md)
+
+    def test_reader_does_not_duplicate_existing_limits_and_takeaway(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        draft = packet["draft"]
+        draft["sections"].extend([
+            {"heading": "局限", "markdown": draft["limitation"], "evidence_ids": ["e1"]},
+            {"heading": "可带走的认识", "markdown": draft["takeaway"], "evidence_ids": ["e1"]},
+        ])
+        md = self.render(packet)
+        self.assertEqual(md.count(draft["limitation"]), 1)
+        self.assertEqual(md.count(draft["takeaway"]), 1)
+
+    def test_reader_theoretical_proof_does_not_invent_measurements(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet("theoretical")
+        md = self.render(packet)
+        self.assertIn("假设与推导", md)
+        self.assertIn("n", md)
+        self.assertNotIn("### 实测结果", md)
+        self.assertNotIn("### 实验结果", md)
+        self.assertIn("未独立复现", md)
+        self.assertIn("论证依据来自原文", md)
+        self.assertNotIn("推导来自原作者", md)
+
+    def test_reader_rejects_resource_and_missing_test_record(self):
+        from tests.test_reader_preview import sample_packet
+        for edits in ({"article_type": "resource"}, {"test_status": "independently_tested", "test_record": None}):
+            packet = sample_packet()
+            packet["draft"].update(edits)
+            with self.assertRaises(ValueError):
+                self.render(packet)
+
+    def test_reader_converts_html_and_unfolds_essential_reasoning(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        packet["draft"]["sections"][1]["markdown"] = (
+            '<details><summary>核心推理</summary><p style="color:red">先比较 '
+            '<strong>同一负载</strong>。<a href="https://example.org/article">原文条件</a></p>'
+            '<script>alert(1)</script><style>p{display:none}</style></details>\n\n'
+            '```python\nif a < b: print("<strong>literal</strong>")\n```'
+        )
+        md = self.render(packet)
+        self.assertIn("核心推理", md)
+        self.assertIn("**同一负载**", md)
+        self.assertIn("[原文条件](https://example.org/article)", md)
+        self.assertIn('if a < b: print("<strong>literal</strong>")', md)
+        self.assertNotIn("<details>", md)
+        self.assertNotIn("alert(1)", md)
+        self.assertNotIn("display:none", md)
+        self.assertNotIn('style="', md)
+
+    def test_reader_marks_all_publication_statuses_and_secondary_paper(self):
+        from tests.test_reader_preview import sample_packet
+        for status, label in (("peer_reviewed", "同行评审"), ("preprint", "预印本"),
+                              ("engineering_blog", "工程博客"), ("unknown", "未知")):
+            with self.subTest(status=status):
+                packet = sample_packet()
+                packet["source_packet"]["publication_status"] = status
+                packet["source_packet"]["original_paper_url"] = "https://example.org/paper"
+                md = self.render(packet)
+                self.assertIn(label, md)
+                self.assertIn("[原始论文](https://example.org/paper)", md)
+
+    def test_reader_does_not_mutate_packet(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        before = deepcopy(packet)
+        self.render(packet)
+        self.assertEqual(packet, before)
+
+    def test_reader_source_dates_are_honest_and_aware_dates_use_beijing(self):
+        from tests.test_reader_preview import sample_packet
+        for value, expected in (
+            ("2026-10-11T18:30:00+00:00", "2026-10-12（北京时间）"),
+            ("2026-10-12T00:30:00+09:00", "2026-10-11（北京时间）"),
+            ("2026-10-11T18:30:00Z", "2026-10-12（北京时间）"),
+            ("2024-02-20", "2024-02-20"),
+            (None, "未确认"), ("", "未确认"), ("2024-02-30", "未确认"),
+            ("2026-10-11T18:30:00", "未确认"), ("not a date", "未确认"),
+        ):
+            with self.subTest(value=value):
+                packet = sample_packet()
+                packet["source_packet"]["published_at"] = value
+                md = self.render(packet)
+                footer = md.split("\n\n---\n\n", 1)[1]
+                self.assertIn("原文日期：" + expected, footer)
+                self.assertNotIn(packet["source_packet"]["fetched_at"], footer)
+                if value == "2024-02-20":
+                    self.assertNotIn("北京时间", footer)
+
+    def test_reader_source_title_and_only_captured_version_are_attributed(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        source = packet["source_packet"]
+        source.update(title="Captured original title", source_version="arXiv v3")
+        before = deepcopy(packet)
+        md = self.render(packet)
+        self.assertIn("[Captured original title](https://example.org/article)", md)
+        self.assertIn("来源版本：arXiv v3", md)
+        self.assertIn(source["author"], md)
+        self.assertEqual(packet, before)
+        for version in (None, "", "  ", {"status": "peer_reviewed"}):
+            source["source_version"] = version
+            source["title"] = ""
+            source["publication_status"] = "peer_reviewed"
+            md = self.render(packet)
+            self.assertIn("[原文](https://example.org/article)", md)
+            self.assertNotIn("来源版本：", md)
+
+    def test_reader_source_metadata_cannot_inject_html_or_markdown(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        source = packet["source_packet"]
+        source.update(title='原题 [链接](https://evil.invalid) <script>x</script>',
+                      author='作者\n![图](https://evil.invalid/image) **假署名**',
+                      source_version='`v3` <img src=x onerror=alert(1)>')
+        md = self.render(packet)
+        footer = md.split("\n\n---\n\n", 1)[1]
+        self.assertIn(r"原题 \[链接\]\(https://evil", footer)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", footer)
+        self.assertIn(r"作者 \!\[图\]", footer)
+        self.assertIn(r"\*\*假署名\*\*", footer)
+        self.assertIn(r"\`v3\`", footer)
+        self.assertNotIn("<script>", footer)
+        self.assertNotIn("<img", footer)
+        self.assertNotIn("\n![", footer)
+
+    def test_reader_source_urls_reject_active_schemes_and_escape_destinations(self):
+        from tests.test_reader_preview import sample_packet
+        for url in ("javascript:alert(1)", "data:text/html,attack", "//evil.invalid", "https://user:pass@example.org"):
+            packet = sample_packet()
+            packet["source_packet"]["url"] = url
+            packet["draft"]["source_url"] = url
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "invalid_source_url"):
+                self.render(packet)
+        packet = sample_packet()
+        url = "https://example.org/paper_(v3)?q=foo bar"
+        packet["source_packet"]["url"] = packet["draft"]["source_url"] = url
+        packet["source_packet"]["original_paper_url"] = "javascript:alert(1)"
+        md = self.render(packet)
+        self.assertIn("[原文](https://example.org/paper_%28v3%29?q=foo%20bar)", md)
+        self.assertNotIn("[原始论文]", md)
+
+    def test_reader_requires_concrete_independent_test_record(self):
+        from tests.test_reader_preview import sample_packet
+        for record in ("亲测通过", {"result": "通过"}, {"environment": "", "command": "", "result": ""}):
+            packet = sample_packet()
+            packet["draft"].update(test_status="independently_tested", test_record=record)
+            with self.assertRaises(ValueError):
+                self.render(packet)
+        packet = sample_packet()
+        packet["draft"].update(test_status="independently_tested", test_record={
+            "environment": "离线临时测试；固定输入 A/B/C", "command": "python check_local.py",
+            "result": "本地格式测试通过，不是模型性能复现", "limitations": "仅检查离线固定输入",
+        })
+        md = self.render(packet)
+        self.assertIn("独立实测", md)
+        self.assertIn("python check_local.py", md)
+        self.assertIn("仅检查离线固定输入", md)
+
+    def test_reader_invalid_evidence_and_unclosed_fence_are_rejected(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        packet["draft"]["sections"][1]["evidence_ids"] = ["e-missing"]
+        with self.assertRaisesRegex(ValueError, "missing_evidence"):
+            self.render(packet)
+        packet = sample_packet()
+        packet["draft"]["sections"][1]["markdown"] += "\n```python\nprint('broken')"
+        with self.assertRaisesRegex(ValueError, "unclosed_code_fence"):
+            self.render(packet)
+
+    def test_reader_html_table_and_pre_keep_conditions_and_code(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        packet["draft"]["sections"][1]["markdown"] = (
+            '<p>假设 n 为元素数，比较成本恒定。</p>'
+            '<table><tr><th>条件</th><th>比较数</th></tr><tr><td>n ≥ 1</td><td>n-1</td></tr></table>'
+            '<pre><code>if a &lt; b:\n    value = "&lt;T&gt;"\n</code></pre>'
+        )
+        md = self.render(packet)
+        self.assertIn("假设 n 为元素数", md)
+        self.assertIn("| 条件 | 比较数 |", md)
+        self.assertIn("| n ≥ 1 | n-1 |", md)
+        self.assertIn('if a < b:\n    value = "<T>"', md)
+        self.assertNotIn("<table>", md)
+
+    def test_reader_does_not_repeat_semantic_limit_or_takeaway_headings(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        packet["draft"]["sections"].extend([
+            {"heading": "研究局限", "markdown": "这组比较也无法解释其他任务中的因果机制。", "evidence_ids": ["e1"]},
+            {"heading": "可带走的认识", "markdown": "先检查对照是否只改变一个条件。", "evidence_ids": ["e1"]},
+        ])
+        md = self.render(packet)
+        self.assertEqual(md.count("### 可带走的认识"), 1)
+        self.assertNotIn("### 局限\n", md)
+        self.assertIn(packet["draft"]["limitation"], md)
+        self.assertIn(packet["draft"]["takeaway"], md)
+
+    def test_reader_malformed_source_returns_validation_error(self):
+        from tests.test_reader_preview import sample_packet
+        packet = sample_packet()
+        packet["source_packet"]["blocks"] = None
+        try:
+            self.render(packet)
+        except Exception as exc:
+            self.assertIsInstance(exc, ValueError)
+            self.assertIn("missing_source_blocks", str(exc))
+        else:
+            self.fail("malformed source must be rejected")
 
 
 if __name__ == "__main__":

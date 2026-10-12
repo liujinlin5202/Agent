@@ -118,12 +118,12 @@ class TestAiPick(unittest.TestCase):
         self.assertIn("4283", prompt)   # 知乎热度
         self.assertIn("知乎热榜", prompt)
 
-    def test_prompt_prefers_big_names_with_freshness(self):
-        """知名大厂/人物关联优先（读者更容易接受），但时效是硬前提——过气旧闻不要。"""
+    def test_prompt_requires_evidence_and_honest_classic_dates(self):
+        """research-v1: 名气与热点不能替代知识，经典材料不伪装今日新闻。"""
         prompt = daily_ai._build_pick_prompt(CANDS)
-        self.assertIn("知名大厂", prompt)
-        self.assertIn("知名人物", prompt)
-        self.assertIn("过气", prompt)   # 同一条里必须带时效前提，防大厂旧文被翻出来
+        self.assertIn("不看字数或大厂名气", prompt)
+        self.assertIn("方法和证据", prompt)
+        self.assertIn("必须准确标注日期", prompt)
 
 
 class TestTranslate(unittest.TestCase):
@@ -238,10 +238,8 @@ class TestPickPromptPreference(unittest.TestCase):
         self.assertIn("编辑当前倾向：jev 相关内容优先", prompt)
         self.assertIn("加分项，不是硬性条件", prompt)
         self.assertIn("必须放弃倾向", prompt)
-        self.assertIn("宁可发非倾向的高价值文章", prompt)
-        # 软规则在 6 条标准之后、写作规则之前
-        self.assertGreater(prompt.index("深度长文 > 短讯"), -1)
-        self.assertLess(prompt.index("编辑当前倾向"), prompt.index("写作规则"))
+        self.assertIn("知识增量", prompt)
+        self.assertNotIn("字数通常与", prompt)
 
     def test_default_mode_prompt_unchanged(self):
         from app.preference import Preference
@@ -273,8 +271,7 @@ class TestPickPromptGating(unittest.TestCase):
 
     def test_info_value_rules_in_prompt(self):
         prompt = daily_ai._build_pick_prompt(CANDS)
-        for kw in ("信息价值", "通稿", "营销软文", "小版本更新", "观点评论",
-                   "知名大厂", "过气", "深度长文 > 短讯"):
+        for kw in ("知识增量", "技术论文", "原理分析", "通稿", "广告", "资源推荐", "证据"):
             self.assertIn(kw, prompt)
 
     def test_body_len_and_excerpt_shown(self):
@@ -292,14 +289,12 @@ class TestPickPromptGating(unittest.TestCase):
         self.assertNotIn("已验证可抓全文", prompt)
         self.assertNotIn("正文预览", prompt)
 
-    def test_ai_industry_news_carveout(self):
-        """选文标准 v4（2026-10-03，用户：帖子主要写 AI 话题）：
-        AI 相关的行业动态/产品发布/并购不再一票否决，非 AI 同类仍禁。"""
+    def test_ai_industry_news_has_no_exception(self):
+        """research-v1 取消旧 AI 行业新闻例外。"""
         prompt = daily_ai._build_pick_prompt(CANDS)
-        self.assertIn("AI 话题例外", prompt)
-        self.assertIn("行业动态", prompt)
-        self.assertIn("不在禁选之列", prompt)
-        self.assertIn("非 AI 话题的同类消息仍然不选", prompt)
+        self.assertNotIn("AI 话题例外", prompt)
+        self.assertIn("AI也没有例外", prompt)
+        self.assertIn("融资人事新闻一律不选", prompt)
 
     def test_non_tech_article_veto(self):
         """2026-10-07 用户：「跟技术有什么关系，不要把这种选进来」——

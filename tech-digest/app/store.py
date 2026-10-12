@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config import settings
@@ -254,7 +254,7 @@ class Store:
         self.conn.execute(
             "INSERT OR REPLACE INTO post_views(post_id, day, sample_day, sampled_at, "
             "browse, likes, comments, heat) VALUES(?,?,?,?,?,?,?,?)",
-            (post_id, day, sample_day, datetime.now().isoformat(timespec="seconds"),
+            (post_id, day, sample_day, datetime.now(timezone.utc).isoformat(timespec="seconds"),
              browse, likes, comments, heat))
         self.conn.commit()
 
@@ -309,13 +309,30 @@ class Store:
 
     # ---------- 保留策略 ----------
     def cleanup(self) -> dict:
-        """daily 保留 N 天；run_log 保留 M 条；浏览采样随 daily 一起过期。返回清理数。"""
+        """daily、成功日报发布日志及采样保留 N 天；其他日志最多 M 条。"""
         cutoff = (date.today() - timedelta(days=settings.daily_retain_days)).isoformat()
         c1 = self.conn.execute("DELETE FROM daily_snapshot WHERE date<?", (cutoff,)).rowcount
-        c2 = self.conn.execute(
-            "DELETE FROM run_log WHERE id NOT IN "
-            "(SELECT id FROM run_log ORDER BY id DESC LIMIT ?)",
-            (settings.run_log_retain,)).rowcount
+        # 用 Python 读 JSON，兼容没有 JSON1 扩展的 SQLite。保护的是本地发布确认
+        # 日志的日期，与 daily 的保留窗口一致；无需历史记录含 published_at 字段。
+        ordinary_kept = 0
+        delete_ids = []
+        rows = self.conn.execute("SELECT id,ts,task,status,detail FROM run_log ORDER BY id DESC")
+        for row in rows:
+            published = False
+            if row["task"] == "daily" and row["status"] == "ok":
+                try:
+                    detail = json.loads(row["detail"] or "{}")
+                except (ValueError, TypeError):
+                    detail = None
+                published = isinstance(detail, dict) and detail.get("detail") == "published"
+            if published:
+                if row["ts"][:10] >= cutoff:
+                    continue
+            elif ordinary_kept < settings.run_log_retain:
+                ordinary_kept += 1
+                continue
+            delete_ids.append((row["id"],))
+        c2 = self.conn.executemany("DELETE FROM run_log WHERE id=?", delete_ids).rowcount
         c3 = self.conn.execute("DELETE FROM post_views WHERE day<?", (cutoff,)).rowcount
         self.conn.commit()
         return {"daily_deleted": c1, "runlog_deleted": c2, "views_deleted": c3}

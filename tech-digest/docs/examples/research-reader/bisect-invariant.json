@@ -1,0 +1,160 @@
+{
+  "editorial_sample_only": true,
+  "review_status": "not_semantically_reviewed",
+  "compiled_at": "2026-10-11T16:07:38.380608+00:00",
+  "validation_meaning": "结构和引用绑定检查；不是自动选稿、实测、模型质量或语义终审通过的证据。",
+  "source_packet": {
+    "url": "https://docs.python.org/3.14/library/bisect.html",
+    "title": "bisect — Array bisection algorithm",
+    "source_version": "Python 3.14 文档（页面标注 3.14.8）；参考源码 CPython v3.14.0",
+    "source_hash": "c4ad888bb8eb6b058e74c7787ad1bde91b404a15b47a2f3b5446973defef7f91",
+    "source_hash_scope": "concatenated_editorial_evidence_excerpts",
+    "published_at": null,
+    "fetched_at": null,
+    "method": "manual_evidence_excerpt",
+    "text": "已排序序列中，bisect_left 返回插入点 ip；其左侧元素小于 x，右侧元素大于等于 x。若存在重复值，插入点在已有同值元素左边。\n\n参考实现以 lo、hi 和中点 mid 缩小范围：a[mid] 小于 x 时把 lo 更新为 mid+1，否则把 hi 更新为 mid，lo 与 hi 相等时返回 lo。文件末尾会尝试导入 C 加速实现。\n\n官方文档将搜索成本写为 O(log n)，列表插入成本为 O(n)，因此 insort 的总体成本由插入主导。搜索不保存 key 函数结果，重复调用时可能重新计算键。\n\n文档警告并发修改同一序列可能产生未定义行为；bisect_left 的 key 作用于数组元素，不作用于传入的 x。",
+    "author": "Python Software Foundation / CPython contributors",
+    "publication_status": "unknown",
+    "original_paper_url": null,
+    "source_kind": "official_documentation_and_reference_source",
+    "evidence_kind": "theoretical",
+    "blocks": [
+      {
+        "id": "b1",
+        "kind": "evidence_excerpt",
+        "text": "已排序序列中，bisect_left 返回插入点 ip；其左侧元素小于 x，右侧元素大于等于 x。若存在重复值，插入点在已有同值元素左边。",
+        "origin_locator": "bisect_left contract",
+        "origin_url": "https://docs.python.org/3.14/library/bisect.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b2",
+        "kind": "evidence_excerpt",
+        "text": "参考实现以 lo、hi 和中点 mid 缩小范围：a[mid] 小于 x 时把 lo 更新为 mid+1，否则把 hi 更新为 mid，lo 与 hi 相等时返回 lo。文件末尾会尝试导入 C 加速实现。",
+        "origin_locator": "Lib/bisect.py, bisect_left key=None branch",
+        "origin_url": "https://raw.githubusercontent.com/python/cpython/v3.14.0/Lib/bisect.py",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b3",
+        "kind": "evidence_excerpt",
+        "text": "官方文档将搜索成本写为 O(log n)，列表插入成本为 O(n)，因此 insort 的总体成本由插入主导。搜索不保存 key 函数结果，重复调用时可能重新计算键。",
+        "origin_locator": "Performance Notes",
+        "origin_url": "https://docs.python.org/3.14/library/bisect.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b4",
+        "kind": "evidence_excerpt",
+        "text": "文档警告并发修改同一序列可能产生未定义行为；bisect_left 的 key 作用于数组元素，不作用于传入的 x。",
+        "origin_locator": "thread safety note; key parameter",
+        "origin_url": "https://docs.python.org/3.14/library/bisect.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      }
+    ],
+    "issues": [
+      "editorial_evidence_excerpts_only"
+    ],
+    "evidence": [
+      {
+        "id": "e1",
+        "block_id": "b1",
+        "statement": "已排序序列中，bisect_left 返回插入点 ip；其左侧元素小于 x，右侧元素大于等于 x。若存在重复值，插入点在已有同值元素左边。"
+      },
+      {
+        "id": "e2",
+        "block_id": "b2",
+        "statement": "参考实现以 lo、hi 和中点 mid 缩小范围：a[mid] 小于 x 时把 lo 更新为 mid+1，否则把 hi 更新为 mid，lo 与 hi 相等时返回 lo。文件末尾会尝试导入 C 加速实现。"
+      },
+      {
+        "id": "e3",
+        "block_id": "b3",
+        "statement": "官方文档将搜索成本写为 O(log n)，列表插入成本为 O(n)，因此 insort 的总体成本由插入主导。搜索不保存 key 函数结果，重复调用时可能重新计算键。"
+      },
+      {
+        "id": "e4",
+        "block_id": "b4",
+        "statement": "文档警告并发修改同一序列可能产生未定义行为；bisect_left 的 key 作用于数组元素，不作用于传入的 x。"
+      }
+    ],
+    "capture_note": "人工选取并转述的最小证据片段，不是原始完整抓取；实际源文捕获时间未记录，fetched_at 为 null。编辑编制时间另记 compiled_at，不冒充来源日期。",
+    "license": {
+      "name": "Python Software Foundation License Version 2; documentation examples also Zero-Clause BSD",
+      "url": "https://docs.python.org/3.14/license.html",
+      "attribution": "Copyright 2001 Python Software Foundation; CPython contributors",
+      "changes": "最小中文证据转述与原创推导；示意伪代码由编辑整理，无整段源码转载。"
+    }
+  },
+  "draft": {
+    "schema_version": 2,
+    "article_type": "mechanism",
+    "source_url": "https://docs.python.org/3.14/library/bisect.html",
+    "source_hash": "c4ad888bb8eb6b058e74c7787ad1bde91b404a15b47a2f3b5446973defef7f91",
+    "title": "二分查找为什么不会漏掉插入位置？",
+    "learning_question": "二分查找为什么不会漏掉插入位置？",
+    "prerequisites": [
+      "理解有序数组、下标和循环不变式"
+    ],
+    "takeaway": "二分法的可靠性来自每一步都保存分区不变式，并让未知区间严格缩短。找到插入位置与实际插入元素有不同成本：前者只排除候选位置，后者还可能搬移数据。把前提、边界和成本对象分别说清楚，才能避免用一句“二分很快”解释整个操作。",
+    "opening": "一个有重复值的有序数组里，怎样找到第一个不小于 x 的位置？Python 的 bisect_left 给出了精确分区契约。本文从官方文档和参考源码出发，解释为何边界更新既不丢答案也能结束，再说明为何查找快不等于插入快。下面的不变式证明是对代码契约的中文推导。",
+    "sections": [
+      {
+        "heading": "问题为何不只是找一个相等值",
+        "markdown": "逐个扫描可以找到位置，却要反复检查很多元素。只问“是否遇到 x”也不够：重复元素可能有多个，而不存在 x 时仍需要合法插入点。官方实现使用小于比较，不靠相等判定推进；目标是返回一个分界，让左侧全部小于 x，右侧全部不小于 x。这样同值元素也有确定归属。[官方分区契约](https://docs.python.org/3.14/library/bisect.html#bisect.bisect_left)说明了这个目标。",
+        "evidence_ids": [
+          "e1"
+        ]
+      },
+      {
+        "heading": "把未知区间与已证明区域分开",
+        "markdown": "设 n 为数组长度，L、R 是尚需判断区间的边界，初始 L=0、R=n。元素区间用 [L,R) 表示，左闭右开；答案是插入位置，可能恰好在 R。保持三个条件：0 ≤ L ≤ R ≤ n；L 左边的元素都小于 x；R 及其右边的元素都不小于 x。两端一开始都为空，因此条件成立，不需要猜答案出现在哪里。",
+        "evidence_ids": [
+          "e1",
+          "e2"
+        ]
+      },
+      {
+        "heading": "一次比较为何能安全排除半边",
+        "markdown": "取中点 m。若 a[m] < x，排序使 L 到 m 的元素也都小于 x，这些下标不能作为分界，令 L=m+1。否则 a[m] ≥ x，排序使 m 及右侧都不小于 x，令 R=m；m 本身仍可以是插入点，所以不能更新为 m-1。这是由契约推出的边界选择，不是记忆模板。对照[参考源码 v3.14.0](https://raw.githubusercontent.com/python/cpython/v3.14.0/Lib/bisect.py)可以核对两个分支。\n\n```text\n未知区间长度：W = R - L\n中点：m = floor((L + R) / 2)\na[m] < x  时：L = m + 1\n否则：R = m\n```\n\n这里 W 是候选元素范围长度，m 是下标；表达式描述比较步骤，不表示运行耗时。",
+        "evidence_ids": [
+          "e1",
+          "e2"
+        ]
+      },
+      {
+        "heading": "用不变式解释结束与重复值",
+        "markdown": "只要 L < R，中点就在未知区间内，两个分支都会让 W 严格减少，因此不会停在原处循环。最终 L=R，全部元素已分属左右两侧，返回 L 就满足目标分区。每次最多保留约一半候选元素；常数访问和比较成本下，步数增长是 O(log n)。\n\n简化例子（为解释而假设，未运行）：数组 [1,3,3,8]，x=3。先看到中点的 3，保留左边；再看到第一个 3，继续左移边界；看到 1 后排除它，最后边界为下标 1。空数组则一开始 L=R=0，同样得到合法插入位置。",
+        "evidence_ids": [
+          "e1",
+          "e2",
+          "e3"
+        ]
+      },
+      {
+        "heading": "证明快的是哪一个操作",
+        "markdown": "文档说 insort 先定位，再插入。Python 列表为腾出中间位置仍可能搬移后续元素，这个线性步骤会盖过对数搜索；因此总体是 O(n)。这不推翻上面的证明，因为证明的对象是寻找分界，未把搬移算进去。昂贵的 key 计算还会改变每步代价，而搜索本身不保留先前的键结果。[官方性能说明](https://docs.python.org/3.14/library/bisect.html#performance-notes)把两种成本明确分开。本文推导使用 Python 参考分支说明边界，不能据此给 C 加速实现编造纳秒数。",
+        "evidence_ids": [
+          "e2",
+          "e3",
+          "e4"
+        ]
+      }
+    ],
+    "limitation": "证明假设数组已排序、比较形成稳定的全序、搜索期间没有修改，且随机访问和一次比较为常数成本。自定义比较或键函数昂贵时，比较次数不能直接当耗时；key 参数也不替 x 计算键。官方并发警告不允许把线程同时改数组的结果纳入这份正确性证明。文档未提供本文假设小数组的实测速度，本次也没有执行性能基准。",
+    "evidence_ids": [
+      "e1",
+      "e2",
+      "e3",
+      "e4"
+    ],
+    "test_status": "not_independently_tested",
+    "test_record": null,
+    "research_checks": {
+      "problem": "已排序序列中，bisect_left 返回插入点 ip；其左侧元素小于 x，右侧元素大于等于 x。若存在重复值，插入点在已有同值元素左边。",
+      "method": "参考实现以 lo、hi 和中点 mid 缩小范围：a[mid] 小于 x 时把 lo 更新为 mid+1，否则把 hi 更新为 mid，lo 与 hi 相等时返回 lo。文件末尾会尝试导入 C 加速实现。",
+      "support": "以官方分区契约和参考源码的两种边界更新为证据，中文推导验证初始化、保持、终止以及 W 减少；不是实验测量。",
+      "conditions": "有限且已排序的数组；稳定全序比较；搜索期间不变；随机访问和单次比较为常数成本；key=None 的参考分支。",
+      "limits": "证明假设数组已排序、比较形成稳定的全序、搜索期间没有修改，且随机访问和一次比较为常数成本。自定义比较或键函数昂贵时，比较次数不能直接当耗时；key 参数也不替 x 计算键。官方并发警告不允许把线程同时改数组的结果纳入这份正确性证明。文档未提供本文假设小数组的实测速度，本次也没有执行性能基准。"
+    }
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "editorial_sample_only": true,
+  "review_status": "not_semantically_reviewed",
+  "compiled_at": "2026-10-11T16:07:38.381999+00:00",
+  "validation_meaning": "结构和引用绑定检查；不是自动选稿、实测、模型质量或语义终审通过的证据。",
+  "source_packet": {
+    "url": "https://sqlite.org/fasterthanfs.html",
+    "title": "35% Faster Than The Filesystem",
+    "source_version": "原报告测量：SQLite 3.19.2 与 3.20.0 之间；2017-06-05 所在周",
+    "source_hash": "32afb317e32ab9d5836dd6c4fdb3c80df50f70d872389144d043720c821e90af",
+    "source_hash_scope": "concatenated_editorial_evidence_excerpts",
+    "published_at": null,
+    "fetched_at": null,
+    "method": "manual_evidence_excerpt",
+    "text": "官方报告给出小 BLOB 读写约快 35% 的概括，并明确数字近似，取决于硬件、操作系统、实验细节和随机波动；冷文件系统缓存时可能更差，也有读者报告相反结果。测量在 2017-06-05 所在周，SQLite 版本在 3.19.2 与 3.20.0 之间。\n\n作者认为一个数据库减少逐文件 open/close 的重复开销，小文件按文件系统块补齐也影响空间。kvtest 构造 100,000 个不可压缩随机 BLOB，每个 8,000–12,000 字节；导出同一批内容为单独文件进行比较。\n\n读取测试使用约 1GB 内容、4KiB 数据库页及 SQLITE_DIRECT_OVERFLOW_READ 编译选项；多次运行，第一次用于缓存预热而丢弃。五套硬件/系统包含不同设备，除 Win7 硬盘外使用 SSD。SQL 语句先准备，再逐项绑定与读取；blob API 和映射读取是其他比较条件。\n\n默认数据库 I/O 都在一个事务内；逐 BLOB 一个事务的 multitrans 条件明显更慢。写测量随机覆盖 10,000 个 BLOB，WAL、synchronous=NORMAL，计时在 commit 后、checkpoint 前停止；单独文件写默认不调用 fsync/FlushFileBuffers。SQLite 事务在此条件下不是 durable。\n\n数据块越大，文件 open/close 的开销越易被内容字节数分摊。文章强调操作系统与硬件使结果差异很大，具体结论需要针对自己的条件测量。",
+    "author": "SQLite 项目官方测量报告",
+    "publication_status": "technical_report",
+    "original_paper_url": null,
+    "source_kind": "official_engineering_measurement_report",
+    "evidence_kind": "engineering_measurement",
+    "blocks": [
+      {
+        "id": "b1",
+        "kind": "evidence_excerpt",
+        "text": "官方报告给出小 BLOB 读写约快 35% 的概括，并明确数字近似，取决于硬件、操作系统、实验细节和随机波动；冷文件系统缓存时可能更差，也有读者报告相反结果。测量在 2017-06-05 所在周，SQLite 版本在 3.19.2 与 3.20.0 之间。",
+        "origin_locator": "§1、§1.1",
+        "origin_url": "https://sqlite.org/fasterthanfs.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b2",
+        "kind": "evidence_excerpt",
+        "text": "作者认为一个数据库减少逐文件 open/close 的重复开销，小文件按文件系统块补齐也影响空间。kvtest 构造 100,000 个不可压缩随机 BLOB，每个 8,000–12,000 字节；导出同一批内容为单独文件进行比较。",
+        "origin_locator": "§1、§2",
+        "origin_url": "https://sqlite.org/fasterthanfs.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b3",
+        "kind": "evidence_excerpt",
+        "text": "读取测试使用约 1GB 内容、4KiB 数据库页及 SQLITE_DIRECT_OVERFLOW_READ 编译选项；多次运行，第一次用于缓存预热而丢弃。五套硬件/系统包含不同设备，除 Win7 硬盘外使用 SSD。SQL 语句先准备，再逐项绑定与读取；blob API 和映射读取是其他比较条件。",
+        "origin_locator": "§2.1",
+        "origin_url": "https://sqlite.org/fasterthanfs.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b4",
+        "kind": "evidence_excerpt",
+        "text": "默认数据库 I/O 都在一个事务内；逐 BLOB 一个事务的 multitrans 条件明显更慢。写测量随机覆盖 10,000 个 BLOB，WAL、synchronous=NORMAL，计时在 commit 后、checkpoint 前停止；单独文件写默认不调用 fsync/FlushFileBuffers。SQLite 事务在此条件下不是 durable。",
+        "origin_locator": "§2、§2.2",
+        "origin_url": "https://sqlite.org/fasterthanfs.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      },
+      {
+        "id": "b5",
+        "kind": "evidence_excerpt",
+        "text": "数据块越大，文件 open/close 的开销越易被内容字节数分摊。文章强调操作系统与硬件使结果差异很大，具体结论需要针对自己的条件测量。",
+        "origin_locator": "§2.3、§3",
+        "origin_url": "https://sqlite.org/fasterthanfs.html",
+        "excerpt_mode": "Chinese editorial paraphrase; not full raw capture"
+      }
+    ],
+    "issues": [
+      "editorial_evidence_excerpts_only"
+    ],
+    "evidence": [
+      {
+        "id": "e1",
+        "block_id": "b1",
+        "statement": "官方报告给出小 BLOB 读写约快 35% 的概括，并明确数字近似，取决于硬件、操作系统、实验细节和随机波动；冷文件系统缓存时可能更差，也有读者报告相反结果。测量在 2017-06-05 所在周，SQLite 版本在 3.19.2 与 3.20.0 之间。"
+      },
+      {
+        "id": "e2",
+        "block_id": "b2",
+        "statement": "作者认为一个数据库减少逐文件 open/close 的重复开销，小文件按文件系统块补齐也影响空间。kvtest 构造 100,000 个不可压缩随机 BLOB，每个 8,000–12,000 字节；导出同一批内容为单独文件进行比较。"
+      },
+      {
+        "id": "e3",
+        "block_id": "b3",
+        "statement": "读取测试使用约 1GB 内容、4KiB 数据库页及 SQLITE_DIRECT_OVERFLOW_READ 编译选项；多次运行，第一次用于缓存预热而丢弃。五套硬件/系统包含不同设备，除 Win7 硬盘外使用 SSD。SQL 语句先准备，再逐项绑定与读取；blob API 和映射读取是其他比较条件。"
+      },
+      {
+        "id": "e4",
+        "block_id": "b4",
+        "statement": "默认数据库 I/O 都在一个事务内；逐 BLOB 一个事务的 multitrans 条件明显更慢。写测量随机覆盖 10,000 个 BLOB，WAL、synchronous=NORMAL，计时在 commit 后、checkpoint 前停止；单独文件写默认不调用 fsync/FlushFileBuffers。SQLite 事务在此条件下不是 durable。"
+      },
+      {
+        "id": "e5",
+        "block_id": "b5",
+        "statement": "数据块越大，文件 open/close 的开销越易被内容字节数分摊。文章强调操作系统与硬件使结果差异很大，具体结论需要针对自己的条件测量。"
+      }
+    ],
+    "capture_note": "人工选取并转述的最小证据片段，不是原始完整抓取；实际源文捕获时间未记录，fetched_at 为 null。编辑编制时间另记 compiled_at，不冒充来源日期。",
+    "license": {
+      "name": "SQLite deliverable documentation dedicated to public domain",
+      "url": "https://sqlite.org/copyright.html",
+      "changes": "原创中文解读与最小证据转述；未复制网页图表，数值和条件归属原作者。"
+    }
+  },
+  "draft": {
+    "schema_version": 2,
+    "article_type": "research",
+    "source_url": "https://sqlite.org/fasterthanfs.html",
+    "source_hash": "32afb317e32ab9d5836dd6c4fdb3c80df50f70d872389144d043720c821e90af",
+    "title": "数据库读小对象为何可能比读文件快？",
+    "learning_question": "数据库读小对象为何可能比读文件快？",
+    "prerequisites": [
+      "知道缓存、事务与磁盘读写"
+    ],
+    "takeaway": "存储性能要比较完整工作，而不是只比较“文件”与“数据库”的名称。打开次数、块大小、缓存、事务批次与持久化要求都进入成本。读到“更快”的数字时，先找数据规模、预热方式和计时终点，再判断它能否回答自己的技术问题。",
+    "opening": "每张缩略图单独放一个文件，真的一定比经过数据库更快吗？SQLite 官方用同一批小 BLOB 比较两条路径，报告结果与这个直觉并不一致。本文解释固定开销怎样影响比较，也把“约快 35%”背后的缓存和事务条件摊开。",
+    "sections": [
+      {
+        "heading": "瓶颈可能在读字节之前",
+        "markdown": "直接读文件省去了查询层，却不省打开、关闭和文件元数据管理。官方作者认为，访问很多小对象时，逐对象重复的固定开销可能超过数据库额外工作；一个数据库可让这些调用在更大范围共享。这是作者对现象的解释，不等于独立隔离每项系统调用的因果实验。[原文摘要与说明](https://sqlite.org/fasterthanfs.html#summary)给出了这个解释与保留意见。",
+        "evidence_ids": [
+          "e1",
+          "e2"
+        ]
+      },
+      {
+        "heading": "用同一批数据才能比较同一件事",
+        "markdown": "原文 kvtest 先生成 100,000 个不可压缩随机对象，每个 8,000–12,000 字节，再把这些内容导出为单独文件。这个安排尽量让内容相同，而不是拿小数据库对比任意大文件。把文件放一层目录或多层目录，属于原文检查的变体。\n\n简化例子（假设，非新测量）：一次打开的成本若为固定量 F，读取内容的成本为 B；重复处理小对象时总成本含有很多 F。增大每个对象的 B，F 的占比便下降。这只解释成本结构，不给 F 或 B 编造时间值。",
+        "evidence_ids": [
+          "e2",
+          "e5"
+        ]
+      },
+      {
+        "heading": "读结果必须连同预热与路径看",
+        "markdown": "作者把“约快 35%”明确写成近似概括，而不是所有平台的承诺。读取部分的比较使用约 1GB 数据、4KiB 页和特定编译选项，运行多次并丢弃用于预热的第一次。SQL 路径先准备语句再绑定各对象；绕过 SQL 的 blob API，以及内存映射，又是不同条件。它们不能混成一个通用倍数。\n\n| 原文读取条件 | 为什么影响结论 |\n| --- | --- |\n| 100,000 个约 10KB 对象 | 小对象固定开销占比高 |\n| 第一轮预热并丢弃 | 属于热缓存口径，非冷启动保证 |\n| 准备语句、blob API、映射分开 | 数据访问路径本身也改变成本 |\n\n[原文读取条件与图表](https://sqlite.org/fasterthanfs.html#read_performance_measurements)可核对细节。冷缓存和部分读者设备出现相反表现，已经写在原文 caveats 中。",
+        "evidence_ids": [
+          "e1",
+          "e3"
+        ]
+      },
+      {
+        "heading": "事务与持久化会改变问题",
+        "markdown": "写入实验随机覆盖 10,000 个对象。数据库批次放在同一个事务里，逐对象独立事务明显更慢；这使提交成本是否分摊成为重要变量。原文数据库使用 WAL 和 synchronous=NORMAL，计时止于提交之后、checkpoint 之前；单独文件路径默认没有逐文件 fsync。\n\n所以两条路径不自动具有相同的持久化保证，计时也没有覆盖数据库的全部后续工作。事务中的原子性与掉电后保留最近提交不是同一承诺。原文自己说明 NORMAL 条件不是 durable；本文不把这组时间改写为“相同耐久保证下必然更快”，也不建议靠关闭同步换取一个漂亮数字。[写入测量口径](https://sqlite.org/fasterthanfs.html#write_performance_measurements)必须和结果一起读。",
+        "evidence_ids": [
+          "e4"
+        ]
+      },
+      {
+        "heading": "从小对象现象回到可检验问题",
+        "markdown": "当对象增大，打开成本被更多字节分摊，文件路径可能重新占优；当缓存从热变冷，或者每个对象各自提交，成本结构也会变。由此可以提出一组明确问题：比较的是同一内容吗？每批多少对象？缓存如何处理？计时终点在哪？持久化要求相同吗？这些问题来自原文的变量控制和边界，不能用单个速度数字代替。",
+        "evidence_ids": [
+          "e1",
+          "e2",
+          "e4",
+          "e5"
+        ]
+      }
+    ],
+    "limitation": "这是一组 2017 年特定小 BLOB 与硬件条件下的作者测量，不能当作当前设备、冷缓存或大型文件的性能保证。原文展示多次运行但没有给出本文可直接重算的完整逐次样本和置信区间；本文也没有独立运行 kvtest。读写还分别受缓存、事务、同步与 checkpoint 计时口径影响；改变持久化保证后，已经不是同一项比较。",
+    "evidence_ids": [
+      "e1",
+      "e2",
+      "e3",
+      "e4",
+      "e5"
+    ],
+    "test_status": "not_independently_tested",
+    "test_record": null,
+    "research_checks": {
+      "problem": "小对象直接文件 I/O 是否必然比 SQLite 快？",
+      "method": "作者认为一个数据库减少逐文件 open/close 的重复开销，小文件按文件系统块补齐也影响空间。kvtest 构造 100,000 个不可压缩随机 BLOB，每个 8,000–12,000 字节；导出同一批内容为单独文件进行比较。",
+      "support": "作者的 kvtest 读取/覆盖写比较与原文条件说明；约快 35% 是有 caveats 的概括，不是本次复现。",
+      "conditions": "读取测试使用约 1GB 内容、4KiB 数据库页及 SQLITE_DIRECT_OVERFLOW_READ 编译选项；多次运行，第一次用于缓存预热而丢弃。五套硬件/系统包含不同设备，除 Win7 硬盘外使用 SSD。SQL 语句先准备，再逐项绑定与读取；blob API 和映射读取是其他比较条件。 默认数据库 I/O 都在一个事务内；逐 BLOB 一个事务的 multitrans 条件明显更慢。写测量随机覆盖 10,000 个 BLOB，WAL、synchronous=NORMAL，计时在 commit 后、checkpoint 前停止；单独文件写默认不调用 fsync/FlushFileBuffers。SQLite 事务在此条件下不是 durable。",
+      "limits": "这是一组 2017 年特定小 BLOB 与硬件条件下的作者测量，不能当作当前设备、冷缓存或大型文件的性能保证。原文展示多次运行但没有给出本文可直接重算的完整逐次样本和置信区间；本文也没有独立运行 kvtest。读写还分别受缓存、事务、同步与 checkpoint 计时口径影响；改变持久化保证后，已经不是同一项比较。"
+    }
+  }
+}

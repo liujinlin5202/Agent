@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import html as _html
 import re
-from datetime import date
+from copy import deepcopy
+from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
+from urllib.parse import quote, urlsplit
 
 from app import titles
 from app.emoji import strip_emoji
@@ -257,3 +260,258 @@ def render_star_post(day: str, trending: list[dict], desc_map: dict[str, str]) -
     lines += ["---", "", "星榜每周六发一次 · 数据来自 GitHub Trending 每日榜", "",
               STAR_SIGNATURE, ""]
     return strip_emoji("\n".join(lines))
+
+
+_PUBLICATION_STATUS = {
+    "peer_reviewed": "同行评审", "preprint": "预印本", "technical_report": "技术报告",
+    "engineering_blog": "工程博客", "unknown": "发表状态未知",
+}
+
+
+def _reader_url(value: str) -> str:
+    """Escape a Markdown destination; this never resolves or fetches a URL."""
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    return quote(value, safe="/:?#=&%+@;~!$,*-._")
+
+
+def _reader_source_text(value, fallback="") -> str:
+    """Metadata is literal text, never authored Markdown or incidental HTML."""
+    text = " ".join(value.split()) if isinstance(value, str) else ""
+    text = _html.escape(text or fallback, quote=False)
+    return re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", text)
+
+
+def _reader_source_date(value) -> str:
+    """Preserve date-only facts; convert aware timestamps without guessing zones.
+
+    Missing, invalid and naive timestamps remain unconfirmed. Fetch/compile time
+    and publication status are never substitutes for the source publication date.
+    """
+    if not isinstance(value, str):
+        return "未确认"
+    value = value.strip()
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return date.fromisoformat(value).isoformat()
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is not None and stamp.utcoffset() is not None:
+            return stamp.astimezone(timezone(timedelta(hours=8))).date().isoformat() + "（北京时间）"
+    except (ValueError, OverflowError):
+        pass
+    return "未确认"
+
+
+class _ReaderHTML(HTMLParser):
+    """Convert incidental source HTML to visible Markdown, dropping active content."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.skip = []
+        self.links = []
+        self.in_pre = False
+        self.table_row = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "iframe", "object", "template"}:
+            self.skip.append(tag)
+            return
+        if self.skip:
+            return
+        attrs = dict(attrs)
+        if tag in {"p", "div", "section", "article", "details", "summary", "ul", "ol", "blockquote"}:
+            self.parts.append("\n\n")
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n\n" + "#" * max(3, int(tag[1])) + " ")
+        elif tag == "br":
+            self.parts.append("\n")
+        elif tag in {"strong", "b"}:
+            self.parts.append("**")
+        elif tag in {"em", "i"}:
+            self.parts.append("*")
+        elif tag == "li":
+            self.parts.append("\n- ")
+        elif tag == "pre":
+            self.in_pre = True
+            self.parts.append("\n\n````\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+        elif tag == "a":
+            url = _reader_url(attrs.get("href", ""))
+            self.links.append(url)
+            if url:
+                self.parts.append("[")
+        elif tag == "img":
+            # Preserve attribution without making remote images an offline dependency.
+            url = _reader_url(attrs.get("src", ""))
+            alt = attrs.get("alt", "来源图表").replace("[", "\\[").replace("]", "\\]")
+            if url:
+                self.parts.append(f"[{alt}]({url})")
+        elif tag == "table":
+            self.table_row = 0
+            self.parts.append("\n\n")
+        elif tag == "tr":
+            self.parts.append("\n|")
+        elif tag in {"td", "th"}:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag):
+        if self.skip:
+            if tag == self.skip[-1]:
+                self.skip.pop()
+            return
+        if tag in {"strong", "b"}:
+            self.parts.append("**")
+        elif tag in {"em", "i"}:
+            self.parts.append("*")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+        elif tag == "pre":
+            self.in_pre = False
+            self.parts.append("\n````\n\n")
+        elif tag == "a" and self.links:
+            url = self.links.pop()
+            if url:
+                self.parts.append(f"]({url})")
+        elif tag in {"p", "div", "section", "article", "details", "summary", "ul", "ol", "blockquote",
+                     "h1", "h2", "h3", "h4", "h5", "h6", "table"}:
+            self.parts.append("\n\n")
+        elif tag in {"td", "th"}:
+            self.parts.append(" |")
+        elif tag == "tr":
+            self.table_row += 1
+            if self.table_row == 1:
+                row = "".join(self.parts).rsplit("\n", 1)[-1]
+                self.parts.append("\n|" + " --- |" * (row.count("|") - 1))
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.parts.append(data.replace("<", "&lt;").replace(">", "&gt;") if not self.in_pre else data)
+
+
+def _reader_markdown(text: str) -> str:
+    """Leave fenced/inline code verbatim; convert only content outside those spans."""
+    def convert(fragment):
+        if not re.search(r"</?[A-Za-z][\w:-]*(?:\s[^<>]*)?/?>", fragment):
+            return fragment
+        parser = _ReaderHTML()
+        parser.feed(fragment)
+        parser.close()
+        return "".join(parser.parts)
+
+    parts, pending, fence = [], [], None
+    def flush():
+        if pending:
+            fragment = "".join(pending)
+            spans = re.split(r"(`+[^`\n]*`+)", fragment)
+            parts.append("".join(s if s.startswith("`") else convert(s) for s in spans))
+            pending.clear()
+
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^\s{0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if fence is None and match:
+            flush()
+            fence = match.group(1)
+            parts.append(line)
+        elif fence:
+            parts.append(line)
+            if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence) and not match.group(2).strip():
+                fence = None
+        else:
+            pending.append(line)
+    flush()
+    return "".join(parts).strip()
+
+
+def render_reader_article(draft: dict, source_packet: dict) -> str:
+    """Render a validated research packet as complete, undecorated Markdown.
+
+    Source evidence remains bound to the input hash; HTML conversion happens on a
+    private copy. Semantic section order belongs to the author, including theory
+    and its assumptions. No code, limits or conclusions are truncated or folded.
+    """
+    from app.reader_article import markdown_issues, source_issues, validate_draft
+
+    if not isinstance(draft, dict) or not isinstance(source_packet, dict):
+        raise ValueError("invalid_packet_structure")
+    errors = source_issues(source_packet)
+    if errors:
+        raise ValueError(",".join(errors))
+    clean = deepcopy(draft)
+    for field in ("title", "opening", "limitation", "takeaway"):
+        if isinstance(clean.get(field), str):
+            clean[field] = _reader_markdown(clean[field])
+    if isinstance(clean.get("sections"), list):
+        for section in clean["sections"]:
+            if isinstance(section, dict):
+                for field in ("heading", "markdown"):
+                    if isinstance(section.get(field), str):
+                        section[field] = _reader_markdown(section[field])
+    errors = validate_draft(clean, source_packet)
+    if errors:
+        raise ValueError(",".join(errors))
+
+    def inline(text):
+        return " ".join(_reader_markdown(text).splitlines()).strip()
+
+    status = _PUBLICATION_STATUS.get(source_packet.get("publication_status", "unknown"), "发表状态未知")
+    prerequisites = "、".join(inline(p) for p in clean["prerequisites"] if p.strip()) or "无特殊前置知识"
+    parts = ["## " + inline(clean["title"]), clean["opening"],
+             f"来源状态：{status} · 前置知识：{prerequisites}"]
+    theoretical = source_packet["evidence_kind"] == "theoretical"
+    if clean["test_status"] == "not_independently_tested":
+        parts.append("论证依据来自原文；推导与解释见正文，未独立复现。" if theoretical else "结果来自原作者报告；未独立复现。")
+    else:
+        record = clean["test_record"]
+        if not isinstance(record, dict) or len(record) < 3 or not all(isinstance(k, str) and k.strip() for k in record) \
+                or sum(bool(v.strip()) if isinstance(v, str) else bool(v) for v in record.values()) < 3:
+            raise ValueError("missing_test_record")
+        parts.append("独立实测范围与记录：\n\n" + "\n".join(
+            f"- {inline(k)}：{inline(v) if isinstance(v, str) else _reader_json_value(v)}" for k, v in record.items()))
+    rendered_sections = "\n\n".join(s["markdown"] for s in clean["sections"])
+    additions, remaining = {}, []
+    for heading, field, pattern in (("局限", "limitation", r"局限|限制|边界|limitations?|limits?"),
+                                     ("可带走的认识", "takeaway", r"可带走|带走的|认识|启示|结论|总结|takeaways?")):
+        # Equality after whitespace normalization covers existing list/paragraph
+        # formatting without discarding other section content under the same heading.
+        normalized = re.sub(r"\s+", "", clean[field])
+        if normalized not in re.sub(r"\s+", "", rendered_sections):
+            existing = next((i for i, s in enumerate(clean["sections"])
+                             if re.search(pattern, s["heading"], re.I)), None)
+            if existing is None:
+                remaining.extend(["### " + heading, clean[field]])
+            else:
+                additions.setdefault(existing, []).append(clean[field])
+    for i, section in enumerate(clean["sections"]):
+        parts.append("### " + inline(section["heading"]))
+        parts.append(section["markdown"])
+        parts.extend(additions.get(i, []))
+    parts.extend(remaining)
+    author = _reader_source_text(source_packet.get("author"), "原作者未署名")
+    source_title = _reader_source_text(source_packet.get("title"), "原文")
+    parts.extend(["---", f"来源：[{source_title}]({_reader_url(source_packet['url'])}) · {author}",
+                  "原文日期：" + _reader_source_date(source_packet.get("published_at"))])
+    version = _reader_source_text(source_packet.get("source_version"))
+    if version:
+        parts.append("来源版本：" + version)
+    original = _reader_url(source_packet.get("original_paper_url") or "")
+    if original:
+        parts.append(f"[原始论文]({original})")
+    parts.append("本文由 AI 辅助解读与整理；简化例子用于解释原理，不能作为真实实验结果。")
+    markdown = "\n\n".join(parts) + "\n"
+    errors = markdown_issues(markdown)
+    if errors:
+        raise ValueError(",".join(errors))
+    return markdown
+
+
+def _reader_json_value(value) -> str:
+    """Keep structured test records readable without interpreting their content."""
+    import json
+    return "`" + json.dumps(value, ensure_ascii=False).replace("`", "\\u0060").replace("<", "\\u003c") + "`"

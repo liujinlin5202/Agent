@@ -1,40 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""发帖表现追踪：采样 + 复盘表（2026-09-13 新增）。
+"""表现追踪：report 只读本地 SQLite；sample 是显式联网采样操作。
 
-用法:
-  python scripts/content_report.py sample            # 记录今天的浏览采样（timer 每日跑）
-  python scripts/content_report.py sample --days 30  # 回补最近 30 天的帖子
-  python scripts/content_report.py report            # 打印复盘表
-  python scripts/content_report.py report --split 2026-09-14   # 改版日前后 h24 均值对比
-
-为什么要有它：改内容之前得先能看见效果。日报发了 40 多期，浏览量一直靠肉眼翻库，
-既没有统一口径，也没有「这期比上期好还是差」的答案——用户最初的判断
-「浏览量减少了很多」就是这么来的（回看数据，8 月均值 47、9 月均值 100，
-其实是小样本下的噪声，真实问题是一直没起来）。
-
-两条口径分开记，别混：
-  · h24 浏览 —— 发布次日的那次采样（daily 09:15 跑，正好是发布后 ~24 小时）；
-  · 当前浏览 —— 最新一次采样，含长尾（实测 9/11 那期 h24 只有 46，后来涨到 277）。
-
-数据源是集市库（app/marketdb.py，只读）。采样落在本地 SQLite 的 post_views：
-集市库的 browse_num 是实时值、没有历史快照，不自己存就永远只能看到「现在」。
+python scripts/content_report.py report --db path/to/tech-digest.db --split 2026-10-11
+report 从 daily 成功发布的 run_log JSON 按 post_id 读取元数据，不访问集市或凭据。
 """
 from __future__ import annotations
 
 import argparse
+import json
+import sqlite3
 import sys
+from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import marketdb, report          # noqa: E402
-from app.config import settings           # noqa: E402
-from app.store import Store               # noqa: E402
+from app import report                    # noqa: E402
 
 
 def _user_id() -> int | None:
+    from app import marketdb
+    from app.config import settings
+
     if not settings.market_user_telephone:
         print("未配置 MARKET_USER_TELEPHONE，无法定位账号", file=sys.stderr)
         return None
@@ -46,6 +35,9 @@ def _user_id() -> int | None:
 
 def cmd_sample(args) -> int:
     """把「本人最近 N 天的帖子」的当前浏览数记一次采样（同一天重复跑会覆盖）。"""
+    from app import marketdb
+    from app.store import Store
+
     uid = _user_id()
     if not uid:
         return 1
@@ -66,18 +58,91 @@ def cmd_sample(args) -> int:
     return 0
 
 
-def cmd_report(args) -> int:
-    store = Store()
+def _post_id(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
     try:
-        samples = store.view_samples(since=args.since)
-        titles = {s["day"]: store.daily_title(s["day"])
-                  for s in samples} if samples else {}
-        rows = report.report_rows(samples, titles)
-        print(report.render_table(rows))
-        print()
-        print(report.summary(rows, args.split))
-    finally:
-        store.close()
+        ident = int(value)
+        return ident if ident > 0 else None
+    except ValueError:
+        return None
+
+
+def _read_report_data(db_path: Path, since: str = "") -> tuple[list[dict], dict[int, str], dict[int, dict]]:
+    """读取稳定的离线副本；缺库/缺采样表时返回空值，不创建目录或迁移。"""
+    db_path = db_path.resolve()
+    if not db_path.is_file():
+        return [], {}, {}
+    wal_path = Path(str(db_path) + "-wal")
+    if wal_path.is_file() and wal_path.stat().st_size:
+        raise sqlite3.DatabaseError("本地数据库含未合并 WAL；请使用已关闭写入连接的完整离线副本，避免遗漏数据")
+    # mode=ro 在 WAL 库仍可能创建 -wal/-shm。immutable 禁止该写入与锁操作；
+    # 离线副本必须在读取期间保持不变，不能拿正在写入的数据库做实时报告。
+    uri = db_path.resolve().as_uri() + "?mode=ro&immutable=1"
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "post_views" not in tables:
+            return [], {}, {}
+        query = "SELECT post_id, day, sample_day, sampled_at, browse, likes, comments, heat FROM post_views"
+        params = []
+        if since:
+            query += " WHERE day >= ?"
+            params.append(since)
+        samples = [dict(row) for row in conn.execute(query + " ORDER BY day, sample_day, post_id", params)]
+        ids = {snap["post_id"] for snap in samples}
+        titles: dict[int, str] = {}
+        post_meta: dict[int, dict] = {}
+        if "run_log" in tables:
+            logs = conn.execute("SELECT detail FROM run_log WHERE task='daily' AND status='ok' ORDER BY id")
+            for log in logs:
+                try:
+                    detail = json.loads(log["detail"] or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(detail, dict) or detail.get("detail") != "published":
+                    continue
+                post_id = _post_id(detail.get("post_id"))
+                if post_id not in ids:
+                    continue
+                fields = ("published_at", "time_basis", "content_version", "article_type", "learning_question")
+                post_meta.setdefault(post_id, {}).update({key: detail[key] for key in fields
+                                                         if detail.get(key) is not None})
+                if isinstance(detail.get("title"), str) and detail["title"]:
+                    titles[post_id] = detail["title"]
+        if "daily_snapshot" in tables:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_snapshot)")}
+            if "post_title" in columns:
+                published_ids = {}
+                if "meta" in tables:
+                    published_ids = {row["key"].removeprefix("daily_posted:"): _post_id(row["value"])
+                                     for row in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'daily_posted:%'")}
+                by_day: dict[str, set[int]] = {}
+                for snap in samples:
+                    by_day.setdefault(snap["day"], set()).add(snap["post_id"])
+                for row in conn.execute("SELECT date, post_title FROM daily_snapshot"):
+                    day_ids = by_day.get(row["date"], set())
+                    if row["date"] in published_ids:
+                        post_id = published_ids[row["date"]]
+                    else:
+                        post_id = next(iter(day_ids)) if len(day_ids) == 1 else None
+                    if post_id in day_ids and row["post_title"]:
+                        titles.setdefault(post_id, row["post_title"])
+        return samples, titles, post_meta
+
+
+def cmd_report(args) -> int:
+    default_db = Path(__file__).resolve().parent.parent / "data" / "tech-digest.db"
+    db_path = Path(getattr(args, "db", None) or default_db)
+    try:
+        samples, titles, post_meta = _read_report_data(db_path, args.since)
+    except sqlite3.DatabaseError as exc:
+        print(f"无法读取本地数据：{exc}", file=sys.stderr)
+        return 1
+    rows = report.report_rows(samples, titles, post_meta)
+    print(report.render_table(rows))
+    print()
+    print(report.summary(rows, args.split))
     return 0
 
 
@@ -87,10 +152,11 @@ def main() -> int:
     sp = sub.add_parser("sample", help="记录浏览采样")
     sp.add_argument("--days", type=int, default=7, help="回补天数（默认 7）")
     sp.set_defaults(func=cmd_sample)
-    rp = sub.add_parser("report", help="打印复盘表")
+    rp = sub.add_parser("report", help="只读本地数据库，打印复盘表")
+    rp.add_argument("--db", default="", help="稳定的离线 SQLite 副本（默认 data/tech-digest.db）")
     rp.add_argument("--since", default="", help="只看某日之后的帖子（YYYY-MM-DD）")
     rp.add_argument("--split", default=date.today().isoformat(),
-                    help="改版日：前后各取一侧对比 h24 均值（默认今天）")
+                    help="改版日：分组描述约24h采样的均值、中位数和计数（默认今天）")
     rp.set_defaults(func=cmd_report)
     args = ap.parse_args()
     return args.func(args)

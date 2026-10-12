@@ -126,30 +126,31 @@ class TestDailyPoolMode(IngestTestBase):
         pool.close()
 
     def _run_daily(self, pick=None):
-        pick = pick or {"idx": 1, "why": "这篇值得读，跟数据库课设直接相关，实习面试也常考。",
-                        "digest": "", "post_titles": ["池内高热文值得今天读吗"]}
+        from app.digest import render_reader_article
+        from tests.reader_fixtures import article_packet, passing_review
+        source, draft = article_packet()
+        material = self._materials()
+        selected = material[0][0]
+        source["url"] = selected["url"]
+        draft["source_url"] = source["url"]
+        markdown = render_reader_article(draft, source).strip()
+        result = {"status": "ready", "title": draft["title"], "markdown": markdown,
+                  "draft": draft, "source_packet": source, "item": selected,
+                  "review": passing_review(draft["title"], markdown, source), "attempts": []}
         captured = {}
-        with patch("main._pool_daily_materials") as pm, \
+        with patch("main._pool_daily_materials", return_value=material), \
              patch("main.Store") as fake_store, \
-             patch("main.settings.sse_market_api_key", "fake-key"), \
-             patch("main.settings.deepseek_api_key", ""), \
+             patch("main.editorial.run_pipeline", return_value=result), \
+             patch("main._publish_md", return_value=True), \
+             patch("main._sample_views"), \
              patch("main.settings.output_dir", self.datadir), \
-             patch("main.settings.market_refresh_token", ""), \
-             patch("main.settings.market_user_telephone", ""), \
-             patch("main.settings.publish_weekend", True), \
              patch("main.date") as fdate, \
-             patch("main._prefetch_gate", side_effect=lambda c: c[:1]), \
-             patch("main.daily_ai.ai_pick", return_value=pick), \
-             patch("main.daily_ai.ai_glossary", return_value=[]), \
-             patch("main._fetch_body", return_value=("全文。" * 100, "full", "")), \
-             patch("main.render_repost", return_value="md"), \
              patch("app.pool.settings.data_dir", self.datadir):
-            pm.return_value = self._materials()
             fs = fake_store.return_value
-            fs.daily_exists.return_value = False
-            fs.is_daily_posted.return_value = True     # 发帖成功路径
+            fs.is_daily_posted.return_value = False
             fs.get_issue_no.return_value = None
             fs.next_issue_no.return_value = 42
+            fs.save_daily_v2.return_value = 42
             fs.recent_daily_titles.return_value = []
             fdate.today.return_value = datetime.now().date()
             fdate.fromisoformat.side_effect = __import__("datetime").date.fromisoformat

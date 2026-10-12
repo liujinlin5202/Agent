@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>/*__TITLE__*/ · 本地正文预览</title>
+  <style>/*__MARKDOWN_CSS__*/</style>
+  <style>/*__PRISM_CSS__*/</style>
+  <style>/*__COMPONENT_CSS__*/</style>
+  <style>
+    :root { --color-text:#1f2328; color-scheme:light; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:20px; background:#f6f8fa; color:#1f2328; }
+    .preview-controls { max-width:920px; margin:0 auto 20px; font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif; }
+    .preview-controls h1 { margin:0 0 8px; font-size:20px; overflow-wrap:anywhere; }
+    .preview-controls p { margin:6px 0 12px; color:#59636e; }
+    .preview-controls .actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+    .preview-controls button,.preview-controls select { font:inherit; min-height:36px; padding:5px 10px; border:1px solid #c9d1d9; border-radius:5px; background:#fff; color:#1f2328; max-width:100%; }
+    .preview-controls a { color:#0969da; }
+    .preview-stage { width:100%; max-width:920px; margin:auto; padding:24px; border:1px solid #d1d9e0; background:#fff; }
+    .preview-stage[data-width="mobile"] { max-width:360px; padding:18px; }
+    .preview-stage[data-width="narrow"] { max-width:320px; padding:14px; }
+    .markdown-body { min-width:0; overflow-wrap:anywhere; font-family:system-ui,"Microsoft YaHei",sans-serif; }
+    .markdown-body .md-code-block { min-width:0; max-width:100%; }
+    .markdown-body pre { max-width:100%; overflow-x:auto; }
+    .markdown-body pre code { white-space:pre; overflow-wrap:normal; }
+    .markdown-body table { display:block; max-width:100%; overflow-x:auto; }
+    .markdown-body img { max-width:100%; height:auto; }
+    #preview-status { min-height:22px; margin-top:8px; }
+    @media(max-width:520px) { body { padding:0; } .preview-controls { padding:12px; } .preview-stage { padding:16px; } }
+  </style>
+</head>
+<body>
+  <header class="preview-controls">
+    <h1>本地正文预览</h1>
+    <p>仅离线格式预览，非发布许可。检查核心方法、证据条件、变量定义与局限。数学使用可读文本；来源链接仅供手动核对。</p>
+    <div class="actions">
+      <label>查看宽度 <select id="preview-width"><option value="desktop">桌面</option><option value="mobile">手机 · 360px</option><option value="narrow">窄屏 · 320px</option></select></label>
+      <a href="body.md">Markdown 正文</a>
+      <a href="check.json">本地检查结果</a>
+    </div>
+    <div id="preview-status" role="status" aria-live="polite"></div>
+  </header>
+  <main class="preview-stage" id="preview-stage" data-width="desktop">
+    <article class="markdown-body w-full" id="post-body" aria-label="研究解读正文" data-theme="light"></article>
+  </main>
+  <script>/*__MARKDOWN_IT__*/</script>
+  <script>/*__DOMPURIFY__*/</script>
+  <script>window.Prism = {manual:true};</script>
+  <script>/*__PRISM__*/</script>
+  <script>/*__PRISM_BASH__*/</script>
+  <script>/*__PRISM_PYTHON__*/</script>
+  <script>/*__PRISM_JSON__*/</script>
+  <script>
+    const sourceMarkdown = /*__BODY_JSON__*/;
+    const md = window.markdownit({html:true,breaks:true,linkify:true,typographer:true,xhtmlOut:true,langPrefix:'language-'});
+    /*__FENCE_RENDERER__*/
+    const rendered = md.render(sourceMarkdown);
+    /*__SANITIZER__*/
+    const body = document.getElementById('post-body');
+    body.innerHTML = finalHTML;
+    Prism.highlightAllUnder(body);
+    const status = document.getElementById('preview-status');
+    function checkWidth() {
+      const pageFits = document.documentElement.scrollWidth <= window.innerWidth;
+      status.textContent = pageFits ? '正文完整可见；代码和表格可在内部横向滚动。' : '页面超宽，请检查未换行的正文。';
+      document.documentElement.dataset.pageFits = String(pageFits);
+    }
+    document.getElementById('preview-width').addEventListener('change', event => {
+      document.getElementById('preview-stage').dataset.width = event.target.value;
+      checkWidth();
+    });
+    window.addEventListener('resize', checkWidth);
+    checkWidth();
+    body.addEventListener('click', async event => {
+      const button = event.target.closest('.md-code-block__copy');
+      if (!button) return;
+      const code = button.closest('.md-code-block').querySelector('code').textContent;
+      try { await navigator.clipboard.writeText(code); status.textContent = '代码已复制。'; }
+      catch { status.textContent = '当前浏览器未允许复制，请选中代码手动复制。'; }
+    });
+  </script>
+</body>
+</html>

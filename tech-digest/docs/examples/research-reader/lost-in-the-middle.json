@@ -1,0 +1,202 @@
+{
+  "editorial_sample_only": true,
+  "review_status": "not_semantically_reviewed",
+  "compiled_at": "2026-10-11T16:03:51.254210+00:00",
+  "validation_meaning": "结构和引用绑定检查；不是自动选稿、实测、模型质量或语义终审通过的证据。",
+  "source_packet": {
+    "url": "https://arxiv.org/html/2307.03172v3",
+    "title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "source_version": "arXiv v3（2023-11-20）",
+    "source_notes": "本包主来源是 arXiv v3 预印本；论文后来发表于 TACL 2024，12:157–173，ACL 条目 https://aclanthology.org/2024.tacl-1.9/ 是另一个已发表版本，不把同行评审身份赋予本包的 v3。",
+    "source_hash": "3eeea872982aa118ab9bf683066f4a61519e36d1a77eb5faaf75ecd662e21853",
+    "source_hash_scope": "concatenated_editorial_evidence_excerpts",
+    "published_at": "2023-11-20",
+    "publication_year": 2024,
+    "fetched_at": null,
+    "method": "manual_evidence_excerpt",
+    "text": "问答使用 NaturalQuestions-Open 的 2,655 个问题；每组资料包含一段答案材料，其余是相关但不含标注答案的干扰材料。\n\n保持问题与材料集合相同，通过移动答案材料控制位置；总材料数分别为 10、20、30。命中依据是输出是否包含标注答案。\n\n论文使用 GPT-3.5-Turbo 0613；不给文档的闭卷命中率是 56.1%，只给一篇答案文档的 oracle 命中率是 88.3%。\n\n受测模型通常在材料前部或后部表现更好、中部较差。20、30 文档的某些位置条件可低于闭卷基线；能装入两者窗口的相同材料上，扩展窗口版本并未自动消除位置差异。\n\n把查询同时放在数据之前和之后，明显改善随机键值检索；多文档问答的位置趋势并没有因此同样改善。\n\n受测编码器—解码器模型在训练长度范围内位置影响较小，超出后也出现中部下降；未经指令微调的部分基础模型也有位置偏好。作者将这些对照视为初步机制调查。\n\n实验涉及论文当时的模型版本和特定问答/键值任务。本文编辑解释：不能直接推广到今天所有模型、长文总结或跨文档推理，也不能将初步机制线索写成完整因果证明。",
+    "author": "Nelson F. Liu、Kevin Lin、John Hewitt、Ashwin Paranjape、Michele Bevilacqua、Fabio Petroni、Percy Liang",
+    "publication_status": "preprint",
+    "original_paper_url": "https://aclanthology.org/2024.tacl-1.9/",
+    "source_kind": "research_paper",
+    "evidence_kind": "empirical",
+    "blocks": [
+      {
+        "id": "b1",
+        "kind": "evidence_excerpt",
+        "text": "问答使用 NaturalQuestions-Open 的 2,655 个问题；每组资料包含一段答案材料，其余是相关但不含标注答案的干扰材料。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§2.1",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b2",
+        "kind": "evidence_excerpt",
+        "text": "保持问题与材料集合相同，通过移动答案材料控制位置；总材料数分别为 10、20、30。命中依据是输出是否包含标注答案。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§2.1、§2.3",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b3",
+        "kind": "evidence_excerpt",
+        "text": "论文使用 GPT-3.5-Turbo 0613；不给文档的闭卷命中率是 56.1%，只给一篇答案文档的 oracle 命中率是 88.3%。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§2.2、表1",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b4",
+        "kind": "evidence_excerpt",
+        "text": "受测模型通常在材料前部或后部表现更好、中部较差。20、30 文档的某些位置条件可低于闭卷基线；能装入两者窗口的相同材料上，扩展窗口版本并未自动消除位置差异。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§2.3、图5",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b5",
+        "kind": "evidence_excerpt",
+        "text": "把查询同时放在数据之前和之后，明显改善随机键值检索；多文档问答的位置趋势并没有因此同样改善。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§4.2",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b6",
+        "kind": "evidence_excerpt",
+        "text": "受测编码器—解码器模型在训练长度范围内位置影响较小，超出后也出现中部下降；未经指令微调的部分基础模型也有位置偏好。作者将这些对照视为初步机制调查。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§4.1、§4.3",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      },
+      {
+        "id": "b7",
+        "kind": "evidence_excerpt",
+        "text": "实验涉及论文当时的模型版本和特定问答/键值任务。本文编辑解释：不能直接推广到今天所有模型、长文总结或跨文档推理，也不能将初步机制线索写成完整因果证明。",
+        "origin_url": "https://arxiv.org/html/2307.03172v3",
+        "origin_locator": "§2、§4；编辑边界说明",
+        "excerpt_mode": "Chinese editorial paraphrase of verified primary-source passage"
+      }
+    ],
+    "issues": [
+      "editorial_evidence_excerpts_only"
+    ],
+    "evidence": [
+      {
+        "id": "e1",
+        "block_id": "b1",
+        "statement": "问答使用 NaturalQuestions-Open 的 2,655 个问题；每组资料包含一段答案材料，其余是相关但不含标注答案的干扰材料。"
+      },
+      {
+        "id": "e2",
+        "block_id": "b2",
+        "statement": "保持问题与材料集合相同，通过移动答案材料控制位置；总材料数分别为 10、20、30。命中依据是输出是否包含标注答案。"
+      },
+      {
+        "id": "e3",
+        "block_id": "b3",
+        "statement": "论文使用 GPT-3.5-Turbo 0613；不给文档的闭卷命中率是 56.1%，只给一篇答案文档的 oracle 命中率是 88.3%。"
+      },
+      {
+        "id": "e4",
+        "block_id": "b4",
+        "statement": "受测模型通常在材料前部或后部表现更好、中部较差。20、30 文档的某些位置条件可低于闭卷基线；能装入两者窗口的相同材料上，扩展窗口版本并未自动消除位置差异。"
+      },
+      {
+        "id": "e5",
+        "block_id": "b5",
+        "statement": "把查询同时放在数据之前和之后，明显改善随机键值检索；多文档问答的位置趋势并没有因此同样改善。"
+      },
+      {
+        "id": "e6",
+        "block_id": "b6",
+        "statement": "受测编码器—解码器模型在训练长度范围内位置影响较小，超出后也出现中部下降；未经指令微调的部分基础模型也有位置偏好。作者将这些对照视为初步机制调查。"
+      },
+      {
+        "id": "e7",
+        "block_id": "b7",
+        "statement": "实验涉及论文当时的模型版本和特定问答/键值任务。本文编辑解释：不能直接推广到今天所有模型、长文总结或跨文档推理，也不能将初步机制线索写成完整因果证明。"
+      }
+    ],
+    "capture_note": "人工选择的证据摘录，不是全文原始抓取。旧材料实际抓取时间未知；fetched_at 保持 null。published_at 是主来源 arXiv v3 的已知版本日；2024 为后来正式发表年份，不编造期刊发表日。",
+    "license": {
+      "name": "CC BY 4.0 for the ACL published version",
+      "url": "https://aclanthology.org/2024.tacl-1.9/",
+      "changes": "中文转述、压缩证据片段；正文沿用已批准的中文编辑稿。"
+    }
+  },
+  "draft": {
+    "schema_version": 2,
+    "article_type": "research",
+    "source_url": "https://arxiv.org/html/2307.03172v3",
+    "source_hash": "3eeea872982aa118ab9bf683066f4a61519e36d1a77eb5faaf75ecd662e21853",
+    "title": "给模型更多资料，为什么答案反而会变差？",
+    "learning_question": "输入容量与稳定利用上下文证据的能力为何需要分开评估？",
+    "prerequisites": [
+      "知道大模型通过上下文接收资料"
+    ],
+    "takeaway": "**检索到证据与正确使用证据，是两个需要分别检查的环节。** 当知识库问答效果不好，只增加返回的材料数量，未必能改善答案。\n\n一个更有区分力的评估问题是：同一份证据移到不同位置，模型还能否稳定答对？这能帮助识别资料覆盖、上下文组织和模型利用能力之间的差别。\n\n下次看到“支持超长上下文”的指标，可以进一步追问：它在什么任务、输入长度和证据位置下测过？这项研究留下的知识价值，是让这些问题变得可检验。",
+    "opening": "把几十段资料交给模型，答案已经在里面，它就一定能找到吗？《Lost in the Middle》通过调整答案所在的位置发现：受测模型往往更擅长利用开头和结尾的信息，放在中间时表现会下降。**输入容量和有效利用能力，需要分别评估。** 读完这篇，你会理解这个差别，以及研究如何排除“资料里根本没有答案”的解释。",
+    "sections": [
+      {
+        "heading": "实验怎样把问题单独拿出来？",
+        "markdown": "知识库问答通常先检索资料，再把检索结果交给模型生成回答。这就是检索增强生成（RAG）。一次回答错误，可能发生在两个环节：检索没有找到证据，或者模型拿到了证据却没有正确使用。\n\n作者把第二个环节单独拿出来测试：从 NaturalQuestions-Open 中选取 2,655 个问题，为每个问题准备一段包含标注答案的材料，再加入相关但不含标注答案的干扰材料。实验分别使用 10、20、30 段材料。\n\n**保持问题和材料集合相同，只移动答案材料的位置**，就能观察位置变化对答题的影响。下面是理解实验设计的简化示意，实际实验的材料更多：\n\n- 前部：答案段落 → 干扰段落 → 干扰段落。\n- 中部：干扰段落 → 答案段落 → 干扰段落。\n- 后部：干扰段落 → 干扰段落 → 答案段落。\n\n三种输入应当得到同一个答案。如果表现不同，就说明“信息已经放进去”还不足以保证稳定使用。作者还检查了歧义问题和干扰材料排序等因素，观察到相近趋势。实验设置见[原文 §2.1 和附录 A—C](https://arxiv.org/html/2307.03172v3)。",
+        "evidence_ids": [
+          "e1",
+          "e2"
+        ]
+      },
+      {
+        "heading": "结果说明了什么？",
+        "markdown": "多文档问答中，多种受测模型呈现类似 U 形的表现：答案位于输入前部或后部时较好，位于中部时较差。\n\n先看作者给出的两种基线。下表针对论文所用的 GPT-3.5-Turbo（0613 版本），数值来自作者报告：\n\n| 输入条件 | 答案命中率 |\n| --- | --- |\n| 不提供资料，让模型直接回答 | 56.1% |\n| 只提供包含答案的那一段资料 | 88.3% |\n\n这里的“命中”按输出中是否包含标注答案判断，不能直接等同于推理过程正确或整段回答都可靠。\n\n更值得注意的是，在 20、30 段材料的某些最差位置条件下，该模型的表现甚至低于不提供资料的基线。另一方面，当同一组材料都能装进普通版和长上下文版的窗口时，长上下文版也没有自动消除位置影响。[原文 §2.3、表 1 和图 5](https://arxiv.org/html/2307.03172v3)给出了这些比较。\n\n由此能区分两种能力：窗口大小描述输入能容纳多少内容；位置变化下的答题表现，描述模型能否稳定地使用这些内容。",
+        "evidence_ids": [
+          "e3",
+          "e4"
+        ]
+      },
+      {
+        "heading": "作者怎样检验原因？",
+        "markdown": "一个直觉是：模型处理资料时，如果提前知道问题，是否更容易挑出有用内容？对于只能向前看已有文本的解码器模型，放在资料之后的问题，无法参与此前资料位置的表示计算。\n\n作者于是把问题同时放在资料前后，测试这种“提前知道要找什么”的安排。它明显改善了随机键值查找任务；但在多文档问答中，位置影响仍然存在。\n\n这个对照提示：精确匹配一个键对应的值，与理解材料并回答自然语言问题，具有不同难度。同一种输入组织方式，在两种任务上可能产生不同收益。\n\n作者还比较了模型结构与微调阶段。在受测编码器—解码器模型中，输入长度处于训练时见过的范围内，位置影响较小；超过该范围后，也出现中间位置表现下降。部分未经指令微调的基础模型同样表现出位置偏好。\n\n**这些实验提供了原因线索，尚未给出一个解释所有模型的完整机制。** “模型像人一样忘记中间内容”可以帮助记住现象，但不能代替机制证据。以上对照见[原文 §4](https://arxiv.org/html/2307.03172v3)。",
+        "evidence_ids": [
+          "e5",
+          "e6"
+        ]
+      },
+      {
+        "heading": "这项研究有哪些边界？",
+        "markdown": "第一，实验使用的是当时的模型版本。GPT-3.5-Turbo、Claude-1.3 等结果不能直接当作今天所有模型的性能结论；新模型需要重新评估。\n\n第二，多文档实验主要要求从材料中找到答案。它没有证明所有长文摘要、跨文档推理、代码分析都具有相同的下降幅度。\n\n第三，把重要证据放在前面值得作为评估方向，但不能保证解决问题。真实任务可能有多个重要片段、矛盾证据，或者需要综合整篇材料；整理上下文时仍需保留必要信息。",
+        "evidence_ids": [
+          "e7"
+        ]
+      },
+      {
+        "heading": "可以带走什么认识？",
+        "markdown": "**检索到证据与正确使用证据，是两个需要分别检查的环节。** 当知识库问答效果不好，只增加返回的材料数量，未必能改善答案。\n\n一个更有区分力的评估问题是：同一份证据移到不同位置，模型还能否稳定答对？这能帮助识别资料覆盖、上下文组织和模型利用能力之间的差别。\n\n下次看到“支持超长上下文”的指标，可以进一步追问：它在什么任务、输入长度和证据位置下测过？这项研究留下的知识价值，是让这些问题变得可检验。",
+        "evidence_ids": [
+          "e1",
+          "e4",
+          "e7"
+        ]
+      }
+    ],
+    "limitation": "第一，实验使用的是当时的模型版本。GPT-3.5-Turbo、Claude-1.3 等结果不能直接当作今天所有模型的性能结论；新模型需要重新评估。\n\n第二，多文档实验主要要求从材料中找到答案。它没有证明所有长文摘要、跨文档推理、代码分析都具有相同的下降幅度。\n\n第三，把重要证据放在前面值得作为评估方向，但不能保证解决问题。真实任务可能有多个重要片段、矛盾证据，或者需要综合整篇材料；整理上下文时仍需保留必要信息。",
+    "evidence_ids": [
+      "e1",
+      "e2",
+      "e3",
+      "e4",
+      "e5",
+      "e6",
+      "e7"
+    ],
+    "test_status": "not_independently_tested",
+    "test_record": null,
+    "research_checks": {
+      "problem": "问答使用 NaturalQuestions-Open 的 2,655 个问题；每组资料包含一段答案材料，其余是相关但不含标注答案的干扰材料。",
+      "method": "保持问题与材料集合相同，通过移动答案材料控制位置；总材料数分别为 10、20、30。命中依据是输出是否包含标注答案。",
+      "support": "论文使用 GPT-3.5-Turbo 0613；不给文档的闭卷命中率是 56.1%，只给一篇答案文档的 oracle 命中率是 88.3%。 受测模型通常在材料前部或后部表现更好、中部较差。20、30 文档的某些位置条件可低于闭卷基线；能装入两者窗口的相同材料上，扩展窗口版本并未自动消除位置差异。",
+      "conditions": "同一问题和资料集合；10/20/30 文档；一段答案材料；0613 模型版本；按包含答案计命中。",
+      "limits": "实验涉及论文当时的模型版本和特定问答/键值任务。本文编辑解释：不能直接推广到今天所有模型、长文总结或跨文档推理，也不能将初步机制线索写成完整因果证明。"
+    }
+  }
+}
