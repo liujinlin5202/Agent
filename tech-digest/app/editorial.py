@@ -105,6 +105,8 @@ def judge_score(candidates, pool=None, preference=None, dry_run=False):
             "权重依次30%、30%、25%、10%、5%；热点和操作步骤不能替代深度。"
             "article_type只能research/mechanism/experiment/resource/tutorial/promotion/other。"
             "content_purpose只能knowledge/resource/tutorial/promotion/other。"
+            "所有字段缺一不可：漏字段的候选视为未评分（glm-5.3 实测会漏 article_type，"
+            "漏了就整条排除，宁可少评不可瞎补）。\n"
             "给出一个具体learning_question及prerequisites数组。\n"
             '{"scores":[{"title":"原题","utility":0,"depth":0,"credibility":0,"audience":0,'
             '"novelty":0,"article_type":"research","content_purpose":"knowledge",'
@@ -330,6 +332,20 @@ def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_t
     attempts = []
     result = {"status": "generation_error", "reasons": ["no_scored_candidates"], "draft": None,
               "source_packet": None, "review": None, "attempts": attempts}
+    # 缺口①（2026-10-13 评审）：完整审稿轨迹——研究跳过/被拒评审/修改前后草稿
+    # 都进 attempts（随 run_log 出参）并按 URL 落池（断点续跑后的归因证据面）。
+    url_attempts: dict[str, list] = {}
+
+    def _note(url, entry):
+        entry = {"url": url, **entry}
+        attempts.append(entry)
+        url_attempts.setdefault(url, []).append(entry)
+
+    def _flush(url):
+        entries = url_attempts.get(url)
+        if entries:
+            _stage(pool, url, "attempts", entries, dry_run)
+
     try:
         scores = judge_score(candidates, pool, preference, dry_run)
         top = [it for it in candidates if _qualified(scores.get(_url(it), {}))]
@@ -345,6 +361,9 @@ def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_t
             url = _url(item)
             notes, packet = research.get(url), packets.get(url)
             if not notes or notes.get("error") or packet is None:
+                _note(url, {"stage": "research", "status": (notes or {}).get("error", "generation_error"),
+                            "reasons": (notes or {}).get("reasons", ["research_unavailable"])})
+                _flush(url)
                 result.update(status=(notes or {}).get("error", "generation_error"), reasons=(notes or {}).get("reasons", ["research_unavailable"]))
                 continue
             cached = _fresh(_row(pool, url).get("review"), "review")
@@ -365,6 +384,9 @@ def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_t
             for revision in range(2):
                 draft = _author(item, packet, notes, feedback)
                 if not draft:
+                    _note(url, {"stage": "author", "revision": revision,
+                                "status": "generation_error", "reasons": ["author_unavailable"]})
+                    _flush(url)
                     result.update(status="generation_error", reasons=["author_unavailable"])
                     break
                 draft.update(schema_version=SCHEMA_VERSION, source_url=packet["url"], source_hash=packet["source_hash"],
@@ -377,27 +399,37 @@ def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_t
                 errors = validate_draft(draft, packet)
                 if errors:
                     result.update(status="skip_quality", reasons=errors, draft=draft, source_packet=packet)
-                    attempts.append({"url": url, "revision": revision, "status": "skip_quality", "reasons": errors})
+                    _note(url, {"stage": "author", "revision": revision, "status": "skip_quality",
+                                "reasons": errors, "title": draft.get("title", ""), "draft": draft})
                     feedback = errors
                     continue
                 md = digest.render_reader_article(draft, packet).strip()
                 review = None if publication_markdown_issues(md) else review_draft(draft["title"], md, draft, packet)
                 decision = decide_publication(draft["title"], md, draft, packet, review)
-                attempts.append({"url": url, "revision": revision, **decision})
+                _note(url, {"stage": "author", "revision": revision, "status": decision["status"],
+                            "reasons": decision.get("reasons", []), "title": draft.get("title", ""),
+                            "draft": draft, "review": review,
+                            "draft_hash": draft_hash(draft["title"], md) if md else None})
                 result.update(**decision, draft=draft, title=draft["title"], markdown=md,
                               source_packet=packet, review=review, item=item)
                 if decision["status"] == "ready":
                     _stage(pool, url, "review", {"kind": "review", "date": _today(), "rubric_version": RUBRIC_VERSION,
                         "source_metadata_hash": source_metadata_hash(packet),
                         "source_hash": packet["source_hash"], "source_url": packet["url"], "draft": draft, "markdown": md, "review": review}, dry_run)
+                    _flush(url)
                     if not dry_run:
                         reserved = [u for u, n in research.items() if u != url and not n.get("error")
                                     and scores.get(u, {}).get("total", 0) >= settings.reserve_score]
                         pool.mark_reserved(reserved)
                     return result
                 if decision["status"] == "generation_error" or (review or {}).get("status") == "reject":
+                    _flush(url)
                     break
                 feedback = review or decision
+            else:
+                _flush(url)
+        for item in top:
+            _flush(_url(item))
         return result
     except Exception as exc:
         log.warning("研究编辑流程异常，已停止成稿：%s", type(exc).__name__)

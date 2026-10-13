@@ -81,6 +81,12 @@ class Settings:
     market_base_url: str = ""  # 留空用 http://127.0.0.1:8080（主站内网直连）
     market_post_partition: str = "技术分享"
     market_post_tag: str = "前沿技术|周报"
+    # ---- 集市只读查询传输（缺口⑤：秋坞 pod 无 docker，用 TCP 直连只读账号）----
+    market_read: str = "docker"       # docker（宿主机默认）| tcp | auto（docker 不可用自动落 tcp）
+    market_mysql_host: str = "127.0.0.1"
+    market_mysql_port: int = 3506
+    market_mysql_user: str = "digest_ro"
+    market_mysql_password: str = ""
     # ---- 任务参数 ----
     top_n: int = 15
     load_threshold: float = 2.5
@@ -125,6 +131,11 @@ class Settings:
             market_base_url=os.environ.get("MARKET_BASE_URL", ""),
             market_post_partition=os.environ.get("MARKET_POST_PARTITION", "技术分享"),
             market_post_tag=os.environ.get("MARKET_POST_TAG", "前沿技术|周报"),
+            market_read=os.environ.get("TECH_DIGEST_MARKET_READ", "docker"),
+            market_mysql_host=os.environ.get("MARKET_MYSQL_HOST", "127.0.0.1"),
+            market_mysql_port=int(os.environ.get("MARKET_MYSQL_PORT", "3506")),
+            market_mysql_user=os.environ.get("MARKET_MYSQL_USER", "digest_ro"),
+            market_mysql_password=os.environ.get("MARKET_MYSQL_PASSWORD", ""),
             top_n=int(os.environ.get("TECH_DIGEST_TOP_N", "15")),
             load_threshold=float(os.environ.get("TECH_DIGEST_LOAD_THRESHOLD", "2.5")),
             check_load=_get_bool("TECH_DIGEST_CHECK_LOAD", True),

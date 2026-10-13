@@ -1,5 +1,40 @@
 # tech-digest 编辑部迭代计划（content pool + 编辑部流水线）
 
+## 2026-10-13 评审缺口修复（五项全补 + 当日 skip 归因）
+
+用户以评审记录（五项「当前缺口」表）授权补齐。全部 TDD，本地全量 796 绿
+（两个既有 Windows 本机环境性失败除外：test_ingest 临时库文件锁 /
+test_pref_public_proxy 隔离跑即过——stash 基线复现，与本次无关）：
+
+1. **完整审稿轨迹与断点续跑**（editorial.run_pipeline）：研究阶段跳过、作者
+   不可用、被拒评审、修改前后草稿全部进 `attempts`（含 stage/revision/title/
+   draft/review/draft_hash），并按 URL 落池 `pool_items.attempts` 列（既有库
+   自动 ALTER 补列）——run_log 的 attempts 从「空数组」变成逐候选可归因。
+2. **失败草稿长期留存**（main._save_daily_draft）：落点从容器内 `output/drafts`
+   改为 state 盘 `data/drafts`——output/ 在秋坞随容器蒸发，data/ 才活过回收。
+3. **重试顺序**（llm.channel + llmpool.chat_with_backoff）：旧实现委托
+   llm.chat(auto)，每次重试都先主后备、备通道被无谓 hammer、16s 档永远走不到；
+   现在主通道重试 ×4（间隔 1/4/16s+抖动，重试期间 channel=primary 绝不碰备）
+   → 退避烧尽才落备通道一次。
+4. **串行任务异常隔离**（llmpool.map_chat 串行快捷路径）：与并发路径同规——
+   单任务异常按 None 收敛，不再炸整条编辑流程。
+5. **线上统计回查**（marketdb 传输抽象）：`TECH_DIGEST_MARKET_READ=docker|tcp|auto`
+   ——宿主机默认 docker 语义不变；秋坞 pod 无 docker，auto 自动落 **pymysql
+   TCP 直连只读账号**（pod 与集市同机、3506 可达，与 assist 服务同一路径）；
+   非 SELECT 在传输入口统一拒绝（只读硬约束的机械化）。config 新增
+   `MARKET_MYSQL_HOST/PORT/USER/PASSWORD`（pod 侧用 digest_ro 只读账号）。
+
+**当日（10-13 09:15）skip_quality 归因**（评审建议的第二步）：judge（glm-5.3）
+给 3 篇最高分候选（0.84×2、0.82）的评分漏了 `article_type` → 被 `_qualified`
+按未分类排除；余下两篇 mechanism（Passkeys / Codex issue 页）研究阶段全文
+不完整被正确跳过（宁缺毋滥，无 bug）。加固：评委 prompt 明示「所有字段缺一
+不可，漏字段视为未评分」。`Passkeys are a trap`（0.74）的 fetch 失败细节正是
+缺口①修的盲区——下一起同类事件 attempts 会直接给出逐候选原因。
+
+秋坞侧待做（部署动作，与代码推送分离）：服务器建 digest_ro 只读账号 →
+.env 注入 MARKET_MYSQL_* → spec run 行加 pymysql + `TECH_DIGEST_MARKET_READ=auto`
+→ POST /v1/deploys 门禁 → 武装。
+
 ## 2026-10-11 本地更新：research-v1
 
 用户确认论文解读预览后，已完成本地实现与离线回归；2026-10-12 又明确授权部署。新规则经 GitHub `main` 提供给秋坞仓库模式，提交与服务端核验单独记录。下文 2026-10-08 的部署和旧稿件策略保留为历史记录。

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS pool_items (
   score_detail  TEXT,
   research      TEXT,
   review        TEXT,
+  attempts      TEXT,
   digest_date   TEXT,
   first_seen    TEXT NOT NULL,
   last_seen     TEXT NOT NULL,
@@ -139,6 +140,12 @@ class PoolStore:
         # SCHEMA 随取：meta（冷却键）与 pool_items 的 DDL 唯一来源仍是各自模块
         self.conn.executescript(SCHEMA)
         self.conn.executescript(POOL_SCHEMA)
+        # 既有库补列（2026-10-13 缺口①：attempts 审稿轨迹列）；CREATE TABLE
+        # IF NOT EXISTS 对已存在的老表不生效，必须显式 ALTER
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(pool_items)")}
+        if "attempts" not in cols:
+            self.conn.execute("ALTER TABLE pool_items ADD COLUMN attempts TEXT")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -289,7 +296,7 @@ class PoolStore:
 
     # ---------- 流水线落库（M2 编辑部：断点续跑的存储面） ----------
 
-    _STAGE_COLUMNS = ("score", "score_detail", "research", "review")
+    _STAGE_COLUMNS = ("score", "score_detail", "research", "review", "attempts")
 
     def get_item(self, url: str) -> dict | None:
         """按规范化 URL 取池行（流水线各步读既有产物，决定跳过或重烧）。"""

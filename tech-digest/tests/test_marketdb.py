@@ -191,5 +191,88 @@ class TestPostVisibility(unittest.TestCase):
         self.assertIsNone(marketdb.post_is_private(6311, runner=_Fake([["x"]])))
 
 
+class TestTransportDispatch(unittest.TestCase):
+    """缺口⑤（2026-10-13 评审）：秋坞 pod 里没有 docker，marketdb 需要第二条
+    传输（pymysql TCP 直连只读账号）。mode=docker（默认，宿主机语义不变）|
+    tcp | auto（docker 不可用自动落 tcp）。只读硬约束在传输入口统一把守。"""
+
+    def test_non_select_rejected_before_any_transport(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_read", "docker"), \
+                patch.object(marketdb, "_run_docker") as d, \
+                patch.object(marketdb, "_run_tcp") as t:
+            self.assertIsNone(marketdb._run("DELETE FROM posts"))
+            self.assertIsNone(marketdb._run("UPDATE posts SET browse_num=0"))
+            d.assert_not_called()
+            t.assert_not_called()
+
+    def test_docker_mode_never_touches_tcp(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_read", "docker"), \
+                patch.object(marketdb, "_run_docker", return_value=[["1"]]) as d, \
+                patch.object(marketdb, "_run_tcp") as t:
+            self.assertEqual(marketdb._run("SELECT 1"), [["1"]])
+            d.assert_called_once()
+            t.assert_not_called()
+
+    def test_tcp_mode_never_touches_docker(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_read", "tcp"), \
+                patch.object(marketdb, "_run_docker") as d, \
+                patch.object(marketdb, "_run_tcp", return_value=[["7"]]) as t:
+            self.assertEqual(marketdb._run("SELECT 1"), [["7"]])
+            d.assert_not_called()
+            t.assert_called_once()
+
+    def test_auto_falls_back_to_tcp_when_docker_unavailable(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_read", "auto"), \
+                patch.object(marketdb, "_run_docker", return_value=None) as d, \
+                patch.object(marketdb, "_run_tcp", return_value=[["9"]]) as t:
+            self.assertEqual(marketdb._run("SELECT 1"), [["9"]])
+            d.assert_called_once()
+            t.assert_called_once()
+
+    def test_auto_short_circuits_when_docker_works(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_read", "auto"), \
+                patch.object(marketdb, "_run_docker", return_value=[["1"]]) as d, \
+                patch.object(marketdb, "_run_tcp") as t:
+            self.assertEqual(marketdb._run("SELECT 1"), [["1"]])
+            t.assert_not_called()
+
+    def test_tcp_normalizes_none_and_types(self):
+        """pymysql 返回的行：None 值 → ""，数值 → 字符串（与 docker -N -B 同形）。"""
+        from unittest.mock import patch
+        conn = type("Conn", (), {})()
+
+        class Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql):
+                self.rows = [(6651, 120, None, 3, 4.5)]
+
+            def fetchall(self):
+                return self.rows
+
+        conn.cursor = lambda: Cur()
+        conn.close = lambda: None
+        with patch.object(marketdb.settings, "market_mysql_password", "pw"), \
+                patch.object(marketdb, "_connect_tcp", return_value=conn):
+            self.assertEqual(marketdb._run_tcp("SELECT 1"),
+                             [["6651", "120", "", "3", "4.5"]])
+
+    def test_tcp_without_password_is_unavailable(self):
+        from unittest.mock import patch
+        with patch.object(marketdb.settings, "market_mysql_password", ""), \
+                patch.object(marketdb, "_connect_tcp") as c:
+            self.assertIsNone(marketdb._run_tcp("SELECT 1"))
+            c.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

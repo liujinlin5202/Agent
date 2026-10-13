@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""llmpool 单测（M2）：并行原语/串行默认/退避/异常隔离。
+"""llmpool 单测（M2 + 2026-10-13 缺口③④修复）。
 
-对应决策：M2 留底 D1（ThreadPool 伪并行，CONCURRENCY=1 严格串行）与
-§5.5 退避契约（1/4/16s+抖动 → 备通道由 llm.chat 内部承接）。
+契约（M2 留底 D1 + 评审缺口③④）：
+  · chat_with_backoff：主通道重试 ×attempts（退避 1/4/16s+抖动）→ 尽才落
+    DeepSeek 备通道一次 → None。主通道重试期间绝不碰备通道；
+  · map_chat 串行/并发两条路径都必须做单任务异常隔离（失败按 None 收敛）。
 """
-import threading
 import unittest
 from unittest.mock import patch
 
@@ -20,15 +21,47 @@ class TestChatWithBackoff(unittest.TestCase):
         self.assertEqual(c.call_count, 1)
         s.assert_not_called()
 
-    def test_retries_then_backup_channel_via_chat(self):
-        """chat 内部已含主备切换；退避只管「两通道皆空」的整轮重试。
-
-        sleeper 必须显式传：它是定义期绑定的默认参数，patch time.sleep 拦不住。
-        """
+    def test_primary_channel_only_during_retries(self):
+        """缺口③：主通道重试期间绝不切备通道——所有重试调用必须 channel=primary。"""
         calls = []
 
         def fake_chat(prompt, **kw):
-            calls.append(1)
+            calls.append(kw.get("channel"))
+            return "from-primary" if len(calls) >= 3 else None
+
+        with patch.object(llmpool, "chat", side_effect=fake_chat):
+            out = llmpool.chat_with_backoff("p", sleeper=lambda s: None)
+        self.assertEqual(out, "from-primary")
+        self.assertEqual(calls, ["primary", "primary", "primary"])
+
+    def test_backup_only_after_primary_exhausted(self):
+        """退避烧尽才落备通道：前 N 次全 primary，最后一次 backup。"""
+        calls = []
+
+        def fake_chat(prompt, **kw):
+            calls.append(kw.get("channel"))
+            return None
+
+        with patch.object(llmpool, "chat", side_effect=fake_chat):
+            out = llmpool.chat_with_backoff("p", sleeper=lambda s: None)
+        self.assertIsNone(out)
+        self.assertEqual(calls, ["primary"] * llmpool.BACKOFF_RETRY_ATTEMPTS + ["backup"])
+
+    def test_backoff_waits_reach_16s(self):
+        """缺口③：默认重试必须走到写明的 16s 退避（1/4/16，含抖动区间）。"""
+        waits = []
+        with patch.object(llmpool, "chat", return_value=None):
+            llmpool.chat_with_backoff("p", sleeper=waits.append)
+        self.assertEqual(len(waits), 3)
+        for w, base in zip(waits, llmpool.BACKOFF_STEPS):
+            self.assertGreaterEqual(w, base)
+            self.assertLessEqual(w, base * 1.25)
+
+    def test_retries_then_recover(self):
+        calls = []
+
+        def fake_chat(prompt, **kw):
+            calls.append(kw.get("channel"))
             return "recovered" if len(calls) >= 3 else None
 
         sleeps = []
@@ -60,6 +93,7 @@ class TestMapChat(unittest.TestCase):
 
     def test_concurrency_two_actually_parallel(self):
         """双任务互相等待对方到场：串行执行会死锁超时，真并发才能同时在场。"""
+        import threading
         gate = threading.Barrier(2, timeout=5)
 
         def fake_chat(prompt, **kw):
@@ -71,7 +105,7 @@ class TestMapChat(unittest.TestCase):
                                    concurrency=2)
         self.assertEqual(out, ["r:a", "r:b"])
 
-    def test_exception_isolated_per_task(self):
+    def test_exception_isolated_per_task_concurrent(self):
         def fake_chat(prompt, **kw):
             if prompt == "boom":
                 raise RuntimeError("llm down")
@@ -81,6 +115,18 @@ class TestMapChat(unittest.TestCase):
             out = llmpool.map_chat([{"prompt": "ok"}, {"prompt": "boom"}],
                                    concurrency=2)
         self.assertEqual(out, ["r:ok", None])
+
+    def test_exception_isolated_per_task_serial(self):
+        """缺口④：串行快捷路径同样要隔离单任务异常——一条炸不停整条编辑流程。"""
+        def fake_chat(prompt, **kw):
+            if prompt == "boom":
+                raise RuntimeError("llm down")
+            return f"r:{prompt}"
+
+        with patch.object(llmpool, "chat", side_effect=fake_chat):
+            out = llmpool.map_chat([{"prompt": "ok"}, {"prompt": "boom"},
+                                    {"prompt": "ok2"}], concurrency=1)
+        self.assertEqual(out, ["r:ok", None, "r:ok2"])
 
     def test_empty_tasks(self):
         self.assertEqual(llmpool.map_chat([]), [])

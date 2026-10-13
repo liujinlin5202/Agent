@@ -50,6 +50,86 @@ def review_reply(score=8, status="pass"):
         "source_complete": True, "evidence_supported": True})
 
 
+class TestAttemptTrail(unittest.TestCase):
+    """缺口①（2026-10-13 评审）：完整审稿轨迹——研究阶段跳过、被拒评审、
+    修改前后草稿都要进 attempts 并落库；今天之前这项是空数组，线上无法归因。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.pool = PoolStore(Path(self.tmp.name) / "pool.db")
+        self.key = patch.object(editorial.settings, "sse_market_api_key", "offline-test-key")
+        self.key.start()
+        self.source, self.draft = article_packet()
+
+    def tearDown(self):
+        self.key.stop()
+        self.pool.close()
+        self.tmp.cleanup()
+
+    def run_pipeline(self, cands, batches, source=None, **kwargs):
+        self.pool.upsert_news(cands)
+        with patch.object(editorial.llmpool, "map_chat", side_effect=batches), \
+                patch.object(editorial.extract, "fetch_with_mirror", return_value=source or self.source):
+            return editorial.run_pipeline(cands, pool=self.pool, **kwargs)
+
+    def persisted(self, url):
+        row = self.pool.get_item(url)
+        return json.loads(row["attempts"] or "[]") if row else []
+
+    def test_research_skip_is_recorded_in_attempts(self):
+        c = candidate()
+        result = self.run_pipeline([c], [[judge_reply([c])]], source={"text": ""})
+        self.assertEqual(result["status"], "generation_error")
+        entry = next(a for a in result["attempts"] if a.get("stage") == "research")
+        self.assertEqual(entry["url"], c["_pool_url"])
+        self.assertEqual(entry["status"], "generation_error")
+        self.assertIn("source_fetch_failed", entry["reasons"])
+        self.assertTrue(self.persisted(c["_pool_url"]))
+
+    def test_validate_failure_attempt_carries_draft(self):
+        c = candidate()
+        bad = json.dumps({**json.loads(author_reply()), "article_type": "resource"})
+        result = self.run_pipeline([c], [[judge_reply([c])], [research_reply()], [bad],
+                                      [author_reply()], [review_reply()]])
+        self.assertEqual(result["status"], "ready")
+        entry = next(a for a in result["attempts"] if a.get("stage") == "author")
+        self.assertIsInstance(entry.get("draft"), dict)
+        self.assertTrue(entry.get("title"))
+        self.assertTrue(self.persisted(c["_pool_url"]))
+
+    def test_rejected_and_revised_attempts_carry_review_and_hash(self):
+        c = candidate()
+        result = self.run_pipeline([c], [[judge_reply([c])], [research_reply()],
+                                         [author_reply()], [review_reply(status="revise")],
+                                         [author_reply()], [review_reply()]])
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(len(result["attempts"]), 2)
+        first, second = result["attempts"]
+        self.assertEqual(first["status"], "skip_quality")
+        self.assertIsInstance(first.get("review"), dict)          # 被拒评审完整留存
+        self.assertIsInstance(first.get("draft"), dict)           # 修改前草稿
+        self.assertIsInstance(second.get("draft"), dict)          # 修改后草稿
+        self.assertTrue(second.get("draft_hash"))
+        self.assertTrue(self.persisted(c["_pool_url"]))
+
+
+    def test_judge_prompt_demands_complete_fields(self):
+        """glm-5.3 实测（2026-10-13）：评分 JSON 漏 article_type → 三篇 0.8+ 被
+        _qualified 当未分类排除。字段缺失是格式失败，prompt 必须明示缺一不可。"""
+        c = candidate()
+        captured = {}
+
+        def fake_map_chat(tasks):
+            captured.setdefault("prompt", tasks[0]["prompt"])   # 只留首次=评委 prompt
+            return [judge_reply([c])]
+
+        with patch.object(editorial.llmpool, "map_chat", side_effect=fake_map_chat), \
+                patch.object(editorial.extract, "fetch_with_mirror", return_value=self.source):
+            editorial.run_pipeline([c], pool=self.pool)
+        self.assertIn("缺一不可", captured["prompt"])
+        self.assertIn("article_type", captured["prompt"])
+
+
 class TestResearchEditorial(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -552,8 +552,12 @@ def _daily_publication_decision(result) -> dict:
 
 
 def _save_daily_draft(day: str, result, decision: dict):
-    """拒稿仅保存在独立草稿目录，不占用正式日期快照或期数。"""
-    drafts = settings.output_dir / "drafts"
+    """拒稿仅保存在草稿目录，不占用正式日期快照或期数。
+
+    落点=state 盘（缺口②，2026-10-13 评审）：output/ 在秋坞 pod 里随容器蒸发，
+    data/ 才是持久挂载——失败草稿是「今天为什么没发」的唯一归因证据，必须活过容器回收。
+    """
+    drafts = settings.data_dir / "drafts"
     drafts.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path = drafts / f"{day}-{stamp}-{uuid4().hex}.json"

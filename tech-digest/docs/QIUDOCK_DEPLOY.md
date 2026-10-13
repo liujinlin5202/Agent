@@ -57,6 +57,8 @@ GitHub monorepo（本仓库）
 | `TECH_DIGEST_RESERVED_TTL_DAYS` | 90 | reserved 高价值沉淀保留天数 |
 | `TECH_DIGEST_REVIEW_THRESHOLD` | 0.7 | M2 终审打回线（M1 仅入配置） |
 | `TECH_DIGEST_RESERVE_SCORE` | 0.8 | M2 高价值沉淀线（M1 仅入配置） |
+| `TECH_DIGEST_MARKET_READ` | `auto` | 集市只读查询传输：docker（宿主机）\| tcp \| auto（pod 无 docker 自动落 pymysql TCP，2026-10-13 缺口⑤） |
+| `MARKET_MYSQL_HOST/PORT/USER/PASSWORD` | 部署时注入 | TCP 只读账号（digest_ro，SELECT-only 授权），pod 与集市同机走 3506；宿主机 docker 模式不读这些 |
 
 secrets 一律不入库：spec 文件里是占位符，部署时从服务器
 `/root/SSE_Market/SSE-Agent/tech-digest/.env` 注入。

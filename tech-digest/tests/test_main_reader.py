@@ -58,6 +58,7 @@ class TestDailyReaderIntegration(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.output = Path(self.temp.name) / "output"
+        self.data = Path(self.temp.name) / "data"
         self.store = TrackedStore()
         self.valid = ready_result()
         self.pref = main.preference.Preference(mode="default", text="")
@@ -111,7 +112,7 @@ class TestDailyReaderIntegration(unittest.TestCase):
         formal = self.output / f"{DAY}-daily.md"
         self.output.mkdir(exist_ok=True)
         formal.write_text("unchanged formal output", encoding="utf-8")
-        prior_drafts = set((self.output / "drafts").glob("*"))
+        prior_drafts = set((self.data / "drafts").glob("*"))
         rc, calls = self.run_once(result, material=material)
         self.assertEqual(rc, expected_rc)
         calls["publish"].assert_not_called()
@@ -125,7 +126,9 @@ class TestDailyReaderIntegration(unittest.TestCase):
         for mock in calls["forbidden"].values():
             mock.assert_not_called()
         self.assertTrue(self.store.closed)
-        drafts = list(set((self.output / "drafts").glob("*")) - prior_drafts)
+        # 缺口②（2026-10-13 评审）：拒稿必须落在 state 盘（data_dir），output/
+        # 在秋坞随容器蒸发——失败草稿是「今天为什么没发」的唯一归因证据。
+        drafts = list(set((self.data / "drafts").glob("*")) - prior_drafts)
         self.assertTrue(drafts)
         record = json.loads(next(p for p in drafts if p.suffix == ".json").read_text(encoding="utf-8"))
         self.assertEqual(record["status"], "generation_error" if expected_rc else "skip_quality")

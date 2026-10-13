@@ -126,6 +126,7 @@ def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
          patch("main.settings.sse_market_api_key", "offline-model" if has_ai else ""), \
          patch("main.settings.deepseek_api_key", ""), \
          patch("main.settings.output_dir", tmp), \
+         patch("main.settings.data_dir", tmp), \
          patch("main.settings.market_refresh_token", ""), \
          patch("main.settings.market_user_telephone", ""), \
          patch("main.settings.publish_weekend", True), \

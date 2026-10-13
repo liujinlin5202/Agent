@@ -1,24 +1,28 @@
 # -*- coding: utf-8 -*-
-"""集市 MySQL 只读查询（docker exec）——定位自己的 postID、采样帖子表现。
+"""集市 MySQL 只读查询——定位自己的 postID、采样帖子表现、回读可见性。
 
 2026-09-13 新增。两件事都卡在同一个缺口上：集市后端发帖成功时返回 data=nil，
 拿不到 postID（2026-08-30 实测），于是「1 楼补楼」和「表现追踪」都没有目标可指。
 
-部署机与集市同机（Go 后端容器 `server`、MySQL 容器 `sse_market_db`，库 `market`），
-publisher._base() 本来就用 docker inspect 解析后端 IP —— docker 依赖已经存在，
-这里沿用同一台机器上的 docker exec，不新增网络暴露面、不新增 Python 依赖。
+传输（缺口⑤，2026-10-13 评审）：
+  · docker（默认，宿主机语义不变）：与集市同机时 `docker exec sse_market_db mysql`
+    ——沿袭 publisher._base() 的 docker 依赖，不新增网络暴露面；
+  · tcp / auto（秋坞 pod 用）：pod 里没有 docker，但与集市同机（k3s 同宿主），
+    MySQL 3506 端口对本机 pod 可达 → pymysql 直连**只读账号**（SELECT-only 授权，
+    比宿主机 root 更贴合只读硬约束）。pymysql 延迟导入：docker 模式零新依赖。
 
-**只读是硬约束**：本模块只跑 SELECT。发帖与评论一律走 publisher 的 API，
-不绕过业务逻辑改库（否则会与集市用户表/热度/通知等副作用脱节）。
+**只读是硬约束**：本模块只跑 SELECT（传输入口统一把守，非 SELECT 直接拒绝）。
+发帖与评论一律走 publisher 的 API，不绕过业务逻辑改库。
 
-开发机没有 docker/容器 → 每个函数返回 None/{}，调用方据此降级（补楼跳过、
-追踪只在部署机上跑），不抛异常。
+查不到/不可用 → None/{}（调用方降级：补楼跳过、追踪记日志），不抛异常。
 """
 from __future__ import annotations
 
 import logging
 import subprocess
 from datetime import datetime
+
+from app.config import settings
 
 log = logging.getLogger("tech-digest")
 
@@ -42,7 +46,7 @@ def _split_rows(stdout: str | None) -> list[list[str]]:
     return out
 
 
-def _run(sql: str) -> list[list[str]] | None:
+def _run_docker(sql: str) -> list[list[str]] | None:
     """docker exec 跑一条 SELECT。不可用/失败 → None（调用方降级，不抛）。"""
     try:
         pw = subprocess.run(
@@ -58,6 +62,60 @@ def _run(sql: str) -> list[list[str]] | None:
     except (subprocess.SubprocessError, OSError) as e:
         log.warning("集市库查询失败（按不可用降级）: %s", e)
         return None
+
+
+def _connect_tcp():
+    """TCP 连接（独立函数便于测试注入）。pymysql 延迟导入：仅 TCP 传输需要。"""
+    import pymysql   # noqa: PLC0415 纯 Python 客户端；docker 模式永远不触发
+    return pymysql.connect(
+        host=settings.market_mysql_host, port=settings.market_mysql_port,
+        user=settings.market_mysql_user, password=settings.market_mysql_password,
+        database=DB, charset="utf8mb4",
+        connect_timeout=_TIMEOUT, read_timeout=_TIMEOUT, write_timeout=_TIMEOUT)
+
+
+def _run_tcp(sql: str) -> list[list[str]] | None:
+    """pymysql 直连只读账号跑一条 SELECT。未配密码/失败 → None（降级，不抛）。"""
+    if not settings.market_mysql_password:
+        return None   # 未配置只读账号 → 视为不可用，与 docker 缺失同语义
+    try:
+        conn = _connect_tcp()
+    except Exception as e:  # noqa: BLE001 连接失败按不可用降级
+        log.warning("集市库 TCP 连接失败（按不可用降级）: %s", type(e).__name__)
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+        # 与 docker -N -B 输出同形：全字符串化，None → ""（_split_rows 消费方零适配）
+        return [[("" if c is None else str(c)) for c in row] for row in rows]
+    except Exception as e:  # noqa: BLE001
+        log.warning("集市库 TCP 查询失败（按不可用降级）: %s", type(e).__name__)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _run(sql: str) -> list[list[str]] | None:
+    """传输入口：按 settings.market_read 分发（docker|tcp|auto）。
+
+    只读硬约束在这里统一把守：非 SELECT 一律拒绝（两条传输都只该见到查询）。
+    auto = 先 docker，不可用自动落 tcp——宿主机与 pod 同一份代码各自工作。
+    """
+    if not sql.lstrip().upper().startswith("SELECT"):
+        log.warning("marketdb 只读硬约束：拒绝非 SELECT 查询")
+        return None
+    mode = settings.market_read
+    if mode in ("docker", "auto"):
+        rows = _run_docker(sql)
+        if rows is not None or mode == "docker":
+            return rows
+    if mode in ("tcp", "auto"):
+        return _run_tcp(sql)
+    return None
 
 
 def available(runner=None) -> bool:

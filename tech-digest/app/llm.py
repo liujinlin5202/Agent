@@ -94,19 +94,27 @@ def _chat_deepseek(prompt: str, system: str | None,
 
 
 def chat(prompt: str, system: str | None = None,
-         max_tokens: int = 4096, timeout: int = 120) -> str | None:
-    """单轮 chat：主通道 market-deploy → 失败自动切 DeepSeek 备用。
-
+         max_tokens: int = 4096, timeout: int = 120,
+         channel: str = "auto") -> str | None:
+    """单轮 chat。channel：
+      · "auto"（默认）：主通道 market-deploy → 失败自动切 DeepSeek 备用（老语义）；
+      · "primary"：只走主通道（llmpool 退避重试用——重试期间绝不碰备通道，
+        避免把网关抖动直接变成备通道流量）；
+      · "backup"：只走备用通道（主通道退避烧尽后的最后落点）。
     两通道都没配 key 或都失败 → None（调用方降级模板）。
     """
+    if channel not in ("auto", "primary", "backup"):
+        raise ValueError(f"非法 channel: {channel}")
     if not settings.sse_market_api_key and not settings.deepseek_api_key:
         return None
-    if settings.sse_market_api_key:
+    if channel in ("auto", "primary") and settings.sse_market_api_key:
         content = _chat_sse(prompt, system, max_tokens, timeout)
         if content:
             return content
+        if channel == "primary":
+            return None
         log.warning("AI 主通道（market-deploy）失败，尝试备用通道")
-    if settings.deepseek_api_key:
+    if channel in ("auto", "backup") and settings.deepseek_api_key:
         content = _chat_deepseek(prompt, system, max_tokens, timeout)
         if content:
             log.info("AI 备用通道（DeepSeek %s）生效", settings.deepseek_model)
