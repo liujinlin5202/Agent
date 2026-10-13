@@ -12,7 +12,6 @@ import json
 import logging
 import re
 import subprocess
-from pathlib import Path
 from urllib.parse import urlparse
 
 import requests

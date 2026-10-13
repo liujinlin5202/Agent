@@ -24,6 +24,23 @@ class TestPublicationGate(unittest.TestCase):
     def test_all_seven_scores_remain_seven(self):
         self.assertEqual(self.gate.weighted_score(dict.fromkeys(("audience", "utility", "credibility", "depth", "novelty"), 7)), 7.0)
 
+    def test_shared_quality_policy_preserves_individual_floors(self):
+        cases = [
+            (dict(utility=7, depth=7, credibility=7, audience=7, novelty=7), True),
+            (dict(utility=10, depth=6, credibility=10, audience=10, novelty=10), False),
+            (dict(utility=10, depth=10, credibility=10, audience=5, novelty=10), False),
+            (dict(utility=8, depth=8, credibility=8, audience=8, novelty=0), True),
+            (dict(utility=7, depth=7, credibility=7, audience=6, novelty=0), False),
+        ]
+        for scores, eligible in cases:
+            with self.subTest(scores=scores):
+                self.assertEqual(self.gate.assess_quality(scores)[1], eligible)
+
+    def test_shared_quality_policy_rejects_invalid_dimensions(self):
+        for bad in (True, "8", float("nan"), float("inf"), -1, 11):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                self.gate.assess_quality(dict(utility=bad, depth=8, credibility=8, audience=8, novelty=8))
+
     def test_numeric_strings_boolean_nan_and_out_of_range_do_not_pass(self):
         for value in ("8", True, float("nan"), float("inf"), -1, 11):
             with self.subTest(value=value), self.assertRaises(ValueError):

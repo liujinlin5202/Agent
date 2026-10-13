@@ -21,7 +21,6 @@ from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import quote, urlsplit
 
-from app import titles
 from app.emoji import strip_emoji
 
 STAR_TOTAL = 15            # 星榜条数
@@ -117,11 +116,6 @@ def headline_of(focus_title: str | None, focus_title_zh: str = "", theme: str = 
         if len(h) <= ENGLISH_HEADLINE_MAX:
             return h
     return ""
-
-
-def fallback_title(pick_title: str) -> str:
-    """v4 兜底发帖标题：选中文章的原题清洗（英文长题回退 headline_of 逻辑）。"""
-    return headline_of(pick_title)
 
 
 def _signal_of(item: dict) -> str:
@@ -475,13 +469,14 @@ def render_reader_article(draft: dict, source_packet: dict) -> str:
         parts.append("独立实测范围与记录：\n\n" + "\n".join(
             f"- {inline(k)}：{inline(v) if isinstance(v, str) else _reader_json_value(v)}" for k, v in record.items()))
     rendered_sections = "\n\n".join(s["markdown"] for s in clean["sections"])
+    normalized_sections = re.sub(r"\s+", "", rendered_sections)
     additions, remaining = {}, []
     for heading, field, pattern in (("局限", "limitation", r"局限|限制|边界|limitations?|limits?"),
                                      ("可带走的认识", "takeaway", r"可带走|带走的|认识|启示|结论|总结|takeaways?")):
         # Equality after whitespace normalization covers existing list/paragraph
         # formatting without discarding other section content under the same heading.
         normalized = re.sub(r"\s+", "", clean[field])
-        if normalized not in re.sub(r"\s+", "", rendered_sections):
+        if normalized not in normalized_sections:
             existing = next((i for i, s in enumerate(clean["sections"])
                              if re.search(pattern, s["heading"], re.I)), None)
             if existing is None:

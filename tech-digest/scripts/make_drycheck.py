@@ -6,7 +6,6 @@
 """
 import json
 import pathlib
-import subprocess
 
 out = pathlib.Path("/tmp/td-drycheck2.json").read_text()
 job = json.loads(out)

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """诊断:集市后端容器 IP 漂移后,新 IP 的 auth refresh 接口是否可用(不回显 token)。"""
-import json
 import sys
 from pathlib import Path
 

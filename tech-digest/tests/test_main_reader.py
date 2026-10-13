@@ -98,8 +98,8 @@ class TestDailyReaderIntegration(unittest.TestCase):
             consume = stack.enter_context(patch("main._mark_pool_consumed"))
             sample = stack.enter_context(patch("main._sample_views"))
             recent = stack.enter_context(patch.object(store, "recent_daily_titles", return_value=["近期标题"]))
-            forbidden = {name: stack.enter_context(patch("main." + name)) for name in
-                         ("_pick_article", "_fetch_body", "_pick_post_title", "_prefetch_gate", "render_repost")}
+            forbidden = {name: stack.enter_context(patch(name)) for name in
+                         ("app.daily_ai.ai_pick", "app.daily_ai.ai_translate", "app.digest.render_repost")}
             # The real pure gate validates all final strings; do not replace it with a success stub.
             gate = stack.enter_context(patch.object(publication_gate, "decide_publication",
                                                    wraps=publication_gate.decide_publication))

@@ -22,7 +22,7 @@ import json
 import logging
 import re
 
-from app import llm, titles
+from app import llm
 from app.preference import Preference
 
 log = logging.getLogger("tech-digest.daily_ai")
@@ -96,7 +96,8 @@ def is_content_related(title: str, orig_summary: str, ai_text: str) -> bool:
     if any(re.search(rf"\b{re.escape(w)}\b", text) for w in title_eng):
         return True
     ai_grams = _cjk_bigrams(_CJK_RE.findall(ai_text or ""))
-    if _cjk_bigrams(title_cjk) and len(_cjk_bigrams(title_cjk) & ai_grams) >= 2:
+    title_grams = _cjk_bigrams(title_cjk)
+    if title_grams and len(title_grams & ai_grams) >= 2:
         return True
     orig_grams = _cjk_bigrams(_CJK_RE.findall(orig_summary or ""))
     return bool(orig_grams and len(orig_grams & ai_grams) >= 2)
@@ -180,16 +181,6 @@ def _candidate_lines(candidates: list[dict]) -> str:
         if excerpt:
             lines[-1] += f"\n   正文预览: {excerpt}"
     return "\n".join(lines)
-
-
-def _gated_clause(candidates: list[dict]) -> str:
-    """全池过闸门时提示 AI：正文预览是判断内容质量的直接证据。"""
-    if not any(it.get("body_len") for it in candidates):
-        return ""
-    return (
-        "本批候选已全部预取验证能抓到全文：「正文预览」是文章开头原文，"
-        "请用它判断真实内容质量——预览里空洞的（没有具体技术内容），标题再热也不选。\n"
-    )
 
 
 def excluded_candidate(item: dict) -> bool:

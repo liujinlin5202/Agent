@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tech-digest 入口（一次性进程，由 systemd timer 触发）。
+"""tech-digest 入口（一次性进程，由秋坞 CronJob 调度）。
 
 用法:
   python main.py ingest                 # 高频抓取入池（每 2h 一班，零 LLM；编辑部 M1）
@@ -45,9 +45,9 @@ from hashlib import sha256
 from logging.handlers import RotatingFileHandler
 from uuid import uuid4
 
-from app import daily_ai, dedup, editorial, extract, marketdb, preference, publication_gate, titles
+from app import daily_ai, dedup, editorial, marketdb, preference, publication_gate
 from app.config import settings
-from app.digest import headline_of, render_repost, render_star_post
+from app.digest import render_star_post
 from app.dedup import normalize_url
 from app.loadgate import should_skip
 from app.pool import PoolStore
@@ -74,8 +74,7 @@ def setup_logging() -> None:
 
 # ---------------- ingest（M1：高频抓取入池，零 LLM） ----------------
 
-# 池模式 daily 送可爬性闸门的候选上限：gate 试抓是真实 HTTP，预算护栏与老路径
-# 同量级（_prefetch_gate 自身 14 次上限不变），池子全量直灌会放大反爬风险
+# 池模式日报初筛上限；研究和成稿预算由 editorial.TOP_N 控制。
 POOL_CANDIDATE_LIMIT = 24
 
 # 反爬命中判定：fetcher 对 4xx 不重试，错误消息带状态码；命中即冷却该源 24h（D9）
@@ -233,72 +232,6 @@ def _daily_candidates(news: list[dict]) -> list[dict]:
     return (zhihu + hn + sspai + devto + feeds + rest)[:48]
 
 
-# ---- 可爬性预取闸门（2026-10-02，用户反馈「这两天选文信息量低」）----------------
-
-GATE_MIN_CHARS = 1_500    # 正文低于此长度视为没料（通稿/短讯），不进挑选池
-GATE_QUALIFY = 6          # 凑满几篇「验证可抓全文」就停
-GATE_MAX_ATTEMPTS = 14    # 试抓上限（预算护栏：最坏 14 次请求也在 5min 红线内）
-GATE_EXCERPT_CHARS = 400  # 送进挑选 prompt 的正文预览长度
-
-# 轮转顺序：每轮各源出一个（防单源刷屏挤掉订阅源；HN/devto 源内按热度降序）
-_GATE_CYCLE = ("hacker-news", "zhihu-hot", "sspai", "devto", "wallstreetcn",
-               "ars-technica", "ieee-spectrum", "freecodecamp", "ruanyifeng",
-               "__rest__")
-
-
-def _gate_groups(candidates: list[dict]) -> dict[str, list[dict]]:
-    groups: dict[str, list[dict]] = {k: [] for k in _GATE_CYCLE}
-    for it in candidates:
-        groups.get(it.get("source") or "", groups["__rest__"]).append(it)
-    groups["hacker-news"].sort(key=lambda it: -(it.get("points") or 0))
-    groups["devto"].sort(key=lambda it: -(it.get("points") or 0))
-    return groups
-
-
-def _try_fetch_art(item: dict) -> dict | None:
-    """原文抓取公共阶梯（实现已提升到 extract.fetch_with_mirror，M2 起单一实现）。"""
-    return extract.fetch_with_mirror(item)
-
-
-def _prefetch_gate(candidates: list[dict]) -> list[dict]:
-    """可爬性预取闸门：ai_pick 只在「验证过能抓到全文」的候选里挑。
-
-    起因：挑选发生在抓取之前，AI 只看标题+200 字摘要+热度定生死——通稿/
-    标题党和硬核文在这个信号集里无法区分，选完才发现抓不到全文（知乎 403/
-    SPA 空壳）降级 AI 导读，读者收获只剩转述。闸门按源轮转试抓，凑满
-    GATE_QUALIFY 篇合格（正文 ≥GATE_MIN_CHARS 字）或到 GATE_MAX_ATTEMPTS
-    即停。返回候选的浅拷贝：_art 全文缓存挂在拷贝上（_fetch_body 直接用，
-    不重抓），绝不污染 news 原条目——它们会被 save_daily_v2 序列化进库。
-    全军覆没返回 []，调用方回退全量候选池（老行为，宁降级不缺席）。
-    """
-    groups = _gate_groups(candidates)
-    qualified: list[dict] = []
-    attempts = 0
-    while attempts < GATE_MAX_ATTEMPTS and len(qualified) < GATE_QUALIFY:
-        progressed = False
-        for key in _GATE_CYCLE:
-            if attempts >= GATE_MAX_ATTEMPTS or len(qualified) >= GATE_QUALIFY:
-                break
-            g = groups[key]
-            if not g:
-                continue
-            progressed = True
-            it = g.pop(0)
-            attempts += 1
-            art = _try_fetch_art(it)
-            text = (art or {}).get("text") or ""
-            if len(text) < GATE_MIN_CHARS:
-                continue
-            cand = dict(it)
-            cand["_art"] = art
-            cand["body_len"] = len(text)
-            cand["excerpt"] = " ".join(text.split())[:GATE_EXCERPT_CHARS]
-            qualified.append(cand)
-        if not progressed:
-            break
-    return qualified
-
-
 def _dedup_history(store: Store, day: str) -> list[tuple[str, dict]]:
     """去重窗口：今日之前最近 14 个快照的 news 条目（v1 条目视为 trending，天然豁免）。
 
@@ -310,72 +243,9 @@ def _dedup_history(store: Store, day: str) -> list[tuple[str, dict]]:
             if (it.get("type") or "trending") == "news"]
 
 
-def _fallback_title(pick: dict | None, candidates: list[dict]) -> str:
-    """兜底发帖标题：选中文章的原题清洗到 30 字内。
-
-    v3 的教训仍在：不要回退到「AI 生态爆发」这类抽象主题——那是实测浏览最低的一类。
-    v4 更简单：兜底就是「这篇文章自己的标题」。
-    """
-    lead = ""
-    if pick:
-        idx = pick.get("idx") or 0
-        if 1 <= idx <= len(candidates):
-            lead = candidates[idx - 1].get("title") or ""
-    if not lead and candidates:
-        lead = candidates[0].get("title") or ""
-    return headline_of(lead, "", "")
-
-
-def _pick_post_title(ai_result: dict | None, recent: list[str], fallback: str = "") -> str:
-    """发帖标题：AI 候选过 app/titles.py 的校验阶梯，全不合格才用兜底。"""
-    return titles.pick((ai_result or {}).get("post_titles") or [], recent, fallback)
-
-
 def _has_ai() -> bool:
+    """Whether the star-post description generator has a configured model."""
     return bool(settings.sse_market_api_key or settings.deepseek_api_key)
-
-
-def _pick_article(candidates: list[dict], day: str,
-                  preference: preference.Preference | None = None) -> tuple[dict | None, dict | None, bool]:
-    """AI 挑 1 篇爆文。失败 → 首条候选 + 空按语（不缺席，只降级）。降级路径不掺倾向。"""
-    pick = None
-    if _has_ai() and candidates:
-        try:
-            pick = daily_ai.ai_pick(candidates, day, preference=preference)
-        except Exception as e:  # noqa: BLE001 AI 是增强项，失败不阻塞发帖
-            log.warning("AI 挑选失败（降级首条候选）: %s", e)
-            pick = None
-    if pick:
-        item = candidates[pick["idx"] - 1]
-        return item, pick, True
-    return candidates[0] if candidates else None, None, False
-
-
-def _fetch_body(item: dict, has_ai: bool) -> tuple[str, str, str]:
-    """抓选中文章的全文 → (body, mode, author)。
-
-    mode: full=全文可发（中文直用 / 英文中译）；digest=拿不到全文，走 AI 导读。
-    item 带 _art（预取闸门的全文缓存）时直接用，不再发请求——全文只抓一次。
-    wallstreetcn 候选走镜像通道（SPA 文章页 → 内容 API，见 app/mirror.py）；
-    知乎/公众号 403 面维持 digest 降级。
-    原文抓取失败（反爬/SPA/付费墙）与翻译失败都不抛——降级导读，当天不缺席。
-    """
-    art = item.get("_art") or _try_fetch_art(item)
-    if art:
-        author = art.get("author") or ""
-        text = art.get("text") or ""
-        if extract.is_mostly_chinese(text):
-            return text, "full", author
-        if has_ai:
-            try:
-                zh = daily_ai.ai_translate(text)
-            except Exception as e:  # noqa: BLE001
-                log.warning("翻译调用失败: %s", e)
-                zh = None
-            if zh:
-                return zh, "full", author
-            log.warning("英文全文翻译失败 → 降级导读")
-    return "", "digest", ""
 
 
 def _publish_allowed(day: str) -> bool:

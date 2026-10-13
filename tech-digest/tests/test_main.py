@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
-"""组装层回归测试：v4 每天一篇爆文（挑 1 → 抓全文/降级导读 → 渲染 → 发帖）。
+"""Entry regressions: research daily gates/state, source quotas and Saturday star.
 
-沿用的历史教训（测试仍在守）：
-  · 2026-08-30 索引错位：AI 输出的是「候选顺序」的 idx，取条目必须按候选反查；
-  · 2026-09-13 标题校验阶梯 + 周末只抓取不发帖；
-  · 2026-09-14 --dry-run 零写入（曾写库递增 issue_next 害停更一天）。
-v4 新增：候选排序（知乎→HN points 降序→sspai）、_fetch_body 降级链、周六星榜任务。
+Retired repost orchestration is not part of the current daily contract.
 """
 import tempfile
 import unittest
@@ -14,8 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import main
-from main import (_daily_candidates, _fallback_title, _fetch_body, _pick_post_title,
-                  _star_title, run_daily, run_star)
+from main import _daily_candidates, _star_title, run_daily, run_star
 
 
 def _item(title, source, points=0):
@@ -132,10 +127,9 @@ def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
          patch("main.settings.publish_weekend", True), \
          patch("main.date") as fdate, \
          patch("main.editorial.run_pipeline", side_effect=pipeline), \
-         patch("main._prefetch_gate", side_effect=AssertionError("legacy gate forbidden")), \
-         patch("main._pick_article", side_effect=AssertionError("legacy picker forbidden")), \
-         patch("main._fetch_body", side_effect=AssertionError("legacy body forbidden")), \
-         patch("main.render_repost", side_effect=AssertionError("legacy renderer forbidden")):
+         patch("app.daily_ai.ai_pick", side_effect=AssertionError("legacy picker forbidden")), \
+         patch("app.daily_ai.ai_translate", side_effect=AssertionError("legacy translation forbidden")), \
+         patch("app.digest.render_repost", side_effect=AssertionError("legacy renderer forbidden")):
         fdate.today.return_value = date.fromisoformat(day)
         fdate.fromisoformat.side_effect = date.fromisoformat
         rc = run_daily(force=True, dry_run=dry)
@@ -191,109 +185,6 @@ class TestCandidatesOrder(unittest.TestCase):
         raw = [_item(f"见闻{i}", "wallstreetcn") for i in range(10)]
         cand = _daily_candidates(raw)
         self.assertEqual(sum(1 for c in cand if c["source"] == "wallstreetcn"), 3)
-
-
-class TestPrefetchGate(unittest.TestCase):
-    """可爬性预取闸门（2026-10-02）：ai_pick 只在「验证过能抓到全文」的候选里挑。
-
-    起因：挑选发生在抓取之前，AI 只看标题+摘要+热度定生死——通稿/标题党与
-    硬核文在这个信号集里无法区分，选完才发现抓不到全文（知乎 403/SPA 空壳），
-    降级 AI 导读后读者收获只剩转述。
-    """
-
-    def _gate_run(self, items, fetch_map, mirror_map=None):
-        """fetch_map: url → 正文字数（None=抛异常）；mirror_map: url → art|异常。"""
-        calls = []
-
-        def fake_fetch(url, **kw):
-            calls.append(url)
-            spec = fetch_map[url]
-            if spec is None:
-                raise RuntimeError("403")
-            return {"text": "字" * spec, "author": "作者甲"}
-
-        def fake_mirror(url):
-            r = (mirror_map or {})[url]
-            if isinstance(r, Exception):
-                raise r
-            return r
-
-        # M2 起抓取阶梯单一实现在 extract.fetch_with_mirror（函数内 from app
-        # import mirror），桩要打在模块属性上才拦得住
-        with patch("app.extract.fetch_article", side_effect=fake_fetch), \
-             patch("app.mirror.mirror_fetch", side_effect=fake_mirror), \
-             patch("app.mirror.needs_mirror",
-                   side_effect=lambda u: "见闻" in u):
-            return main._prefetch_gate(items), calls
-
-    def test_qualifies_and_stashes_on_copy(self):
-        items = [_item("HN 硬核文", "hacker-news", points=200)]
-        qualified, calls = self._gate_run(items, {"https://x.com/HN 硬核文": 2000})
-        self.assertEqual(calls, ["https://x.com/HN 硬核文"])
-        self.assertEqual(len(qualified), 1)
-        self.assertEqual(qualified[0]["body_len"], 2000)
-        self.assertEqual(qualified[0]["_art"]["author"], "作者甲")
-        self.assertTrue(qualified[0]["excerpt"])
-        # 拷贝上挂缓存，原 news 条目绝不被污染（它们会被 save_daily_v2 序列化进库）
-        self.assertNotIn("_art", items[0])
-        self.assertNotIn("body_len", items[0])
-        self.assertNotIn("excerpt", items[0])
-
-    def test_short_body_rejected(self):
-        """正文过短 = 通稿/短讯，不进挑选池（可读性下限）。"""
-        items = [_item("薄通稿", "sspai")]
-        qualified, _ = self._gate_run(items, {"https://x.com/薄通稿": main.GATE_MIN_CHARS - 1})
-        self.assertEqual(qualified, [])
-
-    def test_round_robin_across_sources(self):
-        """源间轮转（HN→知乎→sspai→devto…），源内热度降序——防单源刷屏挤掉订阅源。"""
-        items = [_item("HN1", "hacker-news", points=100),
-                 _item("HN2", "hacker-news", points=90),
-                 _item("知1", "zhihu-hot"), _item("知2", "zhihu-hot"),
-                 _item("少1", "sspai"), _item("d1", "devto", points=5)]
-        fetch_map = {it["url"]: None for it in items}
-        qualified, calls = self._gate_run(items, fetch_map)
-        self.assertEqual(qualified, [])
-        self.assertEqual(calls, ["https://x.com/HN1", "https://x.com/知1",
-                                 "https://x.com/少1", "https://x.com/d1",
-                                 "https://x.com/HN2", "https://x.com/知2"])
-
-    def test_attempt_cap(self):
-        """试抓上限护栏：候选再多也不许超 GATE_MAX_ATTEMPTS 次请求。"""
-        items = [_item(f"HN{i}", "hacker-news", points=100 - i) for i in range(20)]
-        fetch_map = {it["url"]: None for it in items}
-        _, calls = self._gate_run(items, fetch_map)
-        self.assertEqual(len(calls), main.GATE_MAX_ATTEMPTS)
-
-    def test_early_stop_at_qualify_cap(self):
-        """凑满 GATE_QUALIFY 篇合格即停，不白抓。"""
-        items = [_item(f"硬核{i}", "hacker-news", points=100 - i) for i in range(8)]
-        fetch_map = {it["url"]: 2000 for it in items}
-        qualified, calls = self._gate_run(items, fetch_map)
-        self.assertEqual(len(qualified), main.GATE_QUALIFY)
-        self.assertEqual(len(calls), main.GATE_QUALIFY)
-
-    def test_fetch_error_skipped_not_raised(self):
-        items = [_item("炸的", "sspai"), _item("好的", "hacker-news", points=1)]
-        fetch_map = {"https://x.com/炸的": None, "https://x.com/好的": 2000}
-        qualified, calls = self._gate_run(items, fetch_map)
-        self.assertEqual([q["title"] for q in qualified], ["好的"])
-        self.assertEqual(len(calls), 2)
-
-    def test_wallstreetcn_mirror_fallback(self):
-        items = [_item("见闻深度", "wallstreetcn")]
-        qualified, _ = self._gate_run(
-            items, {"https://x.com/见闻深度": None},
-            mirror_map={"https://x.com/见闻深度": {"text": "字" * 2000, "author": "乙"}})
-        self.assertEqual([q["title"] for q in qualified], ["见闻深度"])
-        self.assertEqual(qualified[0]["_art"]["author"], "乙")
-
-    def test_mirror_failure_not_qualified(self):
-        items = [_item("见闻深度", "wallstreetcn")]
-        qualified, _ = self._gate_run(
-            items, {"https://x.com/见闻深度": None},
-            mirror_map={"https://x.com/见闻深度": RuntimeError("net")})
-        self.assertEqual(qualified, [])
 
 
 class TestDailyPickFlow(unittest.TestCase):
@@ -386,113 +277,6 @@ class TestGateWiring(unittest.TestCase):
         self.assertEqual(store.posted, {})
 
 
-class TestFetchBody(unittest.TestCase):
-    """全文抓取降级链：中文直用 → 英文中译 → 拿不到全文走导读。任一层失败不抛。"""
-
-    def test_chinese_used_directly(self):
-        with patch("app.extract.fetch_article",
-                   return_value={"text": "这是中文全文。" * 100, "author": "作者甲"}), \
-             patch("main.daily_ai.ai_translate") as tr:
-            body, mode, author = _fetch_body(_item("t", "sspai"), has_ai=True)
-        self.assertEqual(mode, "full")
-        self.assertEqual(author, "作者甲")
-        tr.assert_not_called()
-
-    def test_english_translated(self):
-        with patch("app.extract.fetch_article",
-                   return_value={"text": "An English article " * 100, "author": ""}), \
-             patch("main.daily_ai.ai_translate", return_value="中文译文"):
-            body, mode, _ = _fetch_body(_item("t", "hacker-news"), has_ai=True)
-        self.assertEqual((body, mode), ("中文译文", "full"))
-
-    def test_gated_cache_skips_refetch(self):
-        """闸门已抓到全文（_art 缓存）→ 直接用，不再发请求（全文只抓一次）。"""
-        it = _item("闸门过的", "hacker-news", points=10)
-        it["_art"] = {"text": "这是一篇中文全文，内容足够扎实可读。", "author": "丙"}
-        with patch("app.extract.fetch_article") as fa, \
-             patch("app.mirror.mirror_fetch") as mf:
-            body, mode, author = _fetch_body(it, has_ai=False)
-        fa.assert_not_called()
-        mf.assert_not_called()
-        self.assertEqual((mode, author), ("full", "丙"))
-        self.assertIn("中文全文", body)
-
-    def test_english_translate_fail_falls_to_digest(self):
-        with patch("app.extract.fetch_article",
-                   return_value={"text": "An English article " * 100, "author": ""}), \
-             patch("main.daily_ai.ai_translate", return_value=None):
-            body, mode, _ = _fetch_body(_item("t", "hacker-news"), has_ai=True)
-        self.assertEqual((body, mode), ("", "digest"))
-
-    def test_unfetchable_falls_to_digest(self):
-        with patch("app.extract.fetch_article", return_value=None):
-            body, mode, _ = _fetch_body(_item("t", "zhihu-hot"), has_ai=True)
-        self.assertEqual((body, mode), ("", "digest"))
-
-    def test_fetch_raise_swallowed(self):
-        with patch("app.extract.fetch_article", side_effect=RuntimeError("403")):
-            body, mode, _ = _fetch_body(_item("t", "zhihu-hot"), has_ai=False)
-        self.assertEqual((body, mode), ("", "digest"))
-
-    def test_wallstreetcn_uses_mirror(self):
-        """wallstreetcn 文章页是 SPA：extract 返回 None → 镜像通道拿全文。"""
-        it = _item("见闻深度", "wallstreetcn")
-        it["url"] = "https://wallstreetcn.com/articles/3781850"
-        with patch("app.extract.fetch_article", return_value=None), \
-             patch("app.mirror.mirror_fetch",
-                   return_value={"text": "镜像全文。" * 200, "author": "刘胜与"}) as mf:
-            body, mode, author = _fetch_body(it, has_ai=True)
-        self.assertEqual((mode, author), ("full", "刘胜与"))
-        self.assertIn("镜像全文", body)
-        mf.assert_called_once_with("https://wallstreetcn.com/articles/3781850")
-
-    def test_mirror_fail_falls_to_digest(self):
-        it = _item("见闻深度", "wallstreetcn")
-        it["url"] = "https://wallstreetcn.com/articles/1"
-        with patch("app.extract.fetch_article", return_value=None), \
-             patch("app.mirror.mirror_fetch", side_effect=RuntimeError("net")):
-            body, mode, _ = _fetch_body(it, has_ai=True)
-        self.assertEqual((body, mode), ("", "digest"))
-
-    def test_non_mirror_url_skips_mirror(self):
-        """知乎 403 面不走镜像（无搜索式发现），维持 digest 降级。"""
-        it = _item("知乎文", "zhihu-hot")
-        with patch("app.extract.fetch_article", return_value=None), \
-             patch("app.mirror.mirror_fetch") as mf:
-            body, mode, _ = _fetch_body(it, has_ai=True)
-        self.assertEqual((body, mode), ("", "digest"))
-        mf.assert_not_called()
-
-
-class TestPickPostTitle(unittest.TestCase):
-    """发帖标题走 titles.pick：AI 候选 → 合规优先 → 兜底。"""
-
-    def test_uses_compliant_candidate(self):
-        ai = {"post_titles": ["显卡要变天？这 3 件事跟你有关", "备选二"]}
-        self.assertEqual(_pick_post_title(ai, [], "兜底头条"),
-                         "显卡要变天？这 3 件事跟你有关")
-
-    def test_skips_banned_and_falls_through(self):
-        ai = {"post_titles": ["今日速览", "秋招风向变了"]}
-        self.assertEqual(_pick_post_title(ai, [], "兜底头条"), "秋招风向变了")
-
-    def test_all_banned_falls_back(self):
-        ai = {"post_titles": ["今日速览", "技术动态一览"]}
-        self.assertEqual(_pick_post_title(ai, [], "兜底头条"), "兜底头条")
-
-    def test_no_ai_uses_fallback(self):
-        self.assertEqual(_pick_post_title(None, [], "兜底头条"), "兜底头条")
-
-    def test_fallback_uses_picked_title(self):
-        cands = [_item("存款利率下调，市场会有哪些影响？", "zhihu-hot")]
-        t = _fallback_title({"idx": 1}, cands)
-        self.assertIn("存款利率下调", t)
-
-    def test_fallback_no_pick_uses_first(self):
-        cands = [_item("HN Some Story", "hacker-news")]
-        self.assertTrue(_fallback_title(None, cands))
-
-
 class TestPublishAllowed(unittest.TestCase):
     """日报：周末只抓取入库不发帖——2026-09-13 用户决策，v4 沿用。"""
 
@@ -583,39 +367,6 @@ class TestStarTask(unittest.TestCase):
 
     def test_title_format(self):
         self.assertEqual(_star_title("2026-09-19"), "9/19 GitHub 开源星榜 Top 15")
-
-
-class TestPickArticlePreference(unittest.TestCase):
-    """倾向透传：_pick_article 必须把 preference 原样交给 ai_pick。"""
-
-    def test_preference_passed_to_ai_pick(self):
-        from app import daily_ai, preference
-        captured = {}
-
-        def fake_pick(candidates, day, preference=None):
-            captured["preference"] = preference
-            return None
-
-        pref = preference.Preference(mode="prefer", text="jev 相关内容优先")
-        with patch.object(daily_ai, "ai_pick", fake_pick), \
-             patch("main.settings.sse_market_api_key", "fake-key"):
-            main._pick_article([{"title": "T", "source": "hacker-news"}],
-                               "2026-09-22", pref)
-        self.assertIs(captured["preference"], pref)
-
-    def test_none_preference_still_calls_ai_pick(self):
-        from app import daily_ai
-        captured = {}
-
-        def fake_pick(candidates, day, preference=None):
-            captured["preference"] = preference
-            return None
-
-        with patch.object(daily_ai, "ai_pick", fake_pick), \
-             patch("main.settings.sse_market_api_key", "fake-key"):
-            main._pick_article([{"title": "T", "source": "hacker-news"}],
-                               "2026-09-22", None)
-        self.assertIsNone(captured["preference"])
 
 
 class TestPublishVerify(unittest.TestCase):

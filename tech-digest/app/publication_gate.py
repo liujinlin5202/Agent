@@ -21,6 +21,14 @@ def weighted_score(scores: dict) -> float:
     return round(total, 6)
 
 
+def assess_quality(scores: dict) -> tuple[float, bool]:
+    """Validate scores once and apply the shared candidate/final-review policy."""
+    score = weighted_score(scores)
+    qualified = score >= 7 and all(scores[k] >= 7 for k in ("utility", "depth", "credibility")) \
+        and scores["audience"] >= 6
+    return score, qualified
+
+
 def decide_publication(title: str, markdown: str, draft: dict,
                        source_packet: dict, review: dict | None) -> dict:
     def result(status, reasons, **extra):
@@ -53,12 +61,11 @@ def decide_publication(title: str, markdown: str, draft: dict,
     if review.get("source_complete") is not True or review.get("evidence_supported") is not True:
         return result("skip_quality", ["incomplete_or_unsupported_research"])
     try:
-        score = weighted_score(review.get("scores"))
+        score, qualified = assess_quality(review.get("scores"))
     except ValueError:
         return result("generation_error", ["invalid_review_scores"])
     if review["status"] != "pass":
         return result("skip_quality", review.get("reasons") or ["review_not_passed"])
-    dims = review["scores"]
-    if score < 7 or any(dims[k] < 7 for k in ("utility", "depth", "credibility")) or dims["audience"] < 6:
+    if not qualified:
         return result("skip_quality", ["below_quality_threshold"], score=score)
     return result("ready", [], score=score)

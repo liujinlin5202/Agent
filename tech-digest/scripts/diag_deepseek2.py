@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """诊断 DeepSeek thinking 控制：试几种参数组合，找出能关思考/产出 text 块的写法。"""
-import json
 import sys
 from pathlib import Path
 

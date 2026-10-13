@@ -14,7 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 from app import daily_ai, digest, extract, llmpool, titles
 from app.config import settings
 from app.pool import PoolStore
-from app.publication_gate import decide_publication, weighted_score
+from app.publication_gate import assess_quality, decide_publication, weighted_score
 from app.reader_article import (ARTICLE_TYPES, FATAL_SOURCE_ISSUES, RUBRIC_VERSION,
     SCHEMA_VERSION, draft_hash, public_url, publication_markdown_issues, source_hash, source_metadata_hash, source_issues, validate_draft)
 
@@ -74,8 +74,7 @@ def _qualified(row):
     try:
         dims = row["dims"]
         return isinstance(row.get("article_type"), str) and row["article_type"] in ARTICLE_TYPES and row.get("content_purpose") == "knowledge" \
-            and weighted_score(dims) >= 7 and all(dims[k] >= 7 for k in ("utility", "depth", "credibility")) \
-            and dims["audience"] >= 6
+            and assess_quality(dims)[1]
     except (KeyError, TypeError, ValueError):
         return False
 

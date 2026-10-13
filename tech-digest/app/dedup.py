@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import re
 from difflib import SequenceMatcher
 
 TITLE_SIM_THRESHOLD = 0.85

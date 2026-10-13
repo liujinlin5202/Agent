@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.store import Store
-from app.weekly import generate_weekly_md, render_weekly
+from app.weekly import render_weekly
 
 from app.daily_ai import _unwrap
 assert _unwrap("《标题》") == "标题"
