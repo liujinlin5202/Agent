@@ -27,7 +27,9 @@ from app.config import settings
 log = logging.getLogger("tech-digest")
 
 CONTAINER = "sse_market_db"
-DB = "market"
+# 平台 2026-10-10 前后重建把库名从 market 改为 ssemarket（实测 SHOW DATABASES；
+# 旧值让 USE market 报 Unknown database、一切查询静默降级）——以现网为准
+DB = "ssemarket"
 _TIMEOUT = 15
 
 

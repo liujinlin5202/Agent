@@ -13,7 +13,29 @@
 > [EDITORIAL_PLAN.md](EDITORIAL_PLAN.md)——M1 池子底座 / M2 质量环 / M3 沉淀，
 > 含全部决策理由与上手指南。
 
-## 部署形态
+## 部署形态（2026-10-13 更新：新 deploy API 契约）
+
+秋坞 deploy API 已升级（旧格式会 422 `spec.image is required`）：仓库模式必须显式
+
+```yaml
+repo:
+  url: "https://github.com/liujinlin5202/Agent.git"
+  run: "pip install -q requests beautifulsoup4 pymysql && ln -sfn /work/state tech-digest/data && cd tech-digest && python main.py daily"
+net: host                 # 172.18.0.4(集市后端)/10.1.0.4(mysql)/github.com 全靠宿主网络
+resources: {mem_mib: 512, cpu_milli: 400}
+mounts:
+  - {mount_path: /work/state, host_path: /root/SSE_Market/SSE-Agent/tech-digest/data}
+```
+
+- 四条 schedule 的 run 行各自显式（GET /v1/agents 对 daily 不回显 run，但 live
+  CronJob 是平台默认模板填的——**默认模板没有 pymysql，必须显式写全**）。
+- 秘钥占位符 `KEY: "（部署时注入）"` 由部署脚本从服务器 .env 替换
+  （/tmp/deploy_td.py 做法，本仓不存真实值）。部署轮询：GET /v1/runs/{id}。
+- 集市库名 2026-10-10 平台重建后为 **`ssemarket`**（旧名 `market` 已不存在；
+  marketdb.py 已改）。只读查询走 digest_ro 账号（SELECT-only on ssemarket.*，
+  密码在服务器 tech-digest/.env 的 MARKET_MYSQL_PASSWORD）。
+
+## 部署形态（历史）
 
 ```
 GitHub monorepo（本仓库）
