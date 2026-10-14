@@ -293,8 +293,27 @@ def _author(item, packet, research, feedback=None):
         + json.dumps({"item": item, "research": {k: v for k, v in research.items() if k != "source_packet"}, "source_blocks": view, "omitted_block_ids": omitted,
                       "revision_feedback": feedback}, ensure_ascii=False)
     )
-    replies = llmpool.map_chat([{"prompt": prompt, "system": SYSTEM_PROMPT, "max_tokens": 6000}])
-    return _json(replies[0]) if replies else None
+    # 格式契约重试（2026-10-14）：qwen 实测会无视 JSON 契约直接产出 Markdown 成品文
+    # （网关会话镜像 auto-tech-digest 桶实录），_json 解析失败即 author_unavailable。
+    # 失败不再原样重抽——把失败原因与上次输出开头喂回去、明确只输出 JSON，最多 3 次调用。
+    last = None
+    for _ in range(3):
+        ask = prompt
+        if last:
+            ask = (prompt + "\n\n【上次输出不合格：" + last["err"] + " 你的上次输出开头："
+                   + last["head"] + " 再次强调：只输出一个 JSON 对象（以 { 开头、以 } 结尾），"
+                   "禁止输出 Markdown 正文、标题或任何解释文字。】")
+        replies = llmpool.map_chat([{"prompt": ask, "system": SYSTEM_PROMPT, "max_tokens": 6000}])
+        if not replies or not replies[0]:
+            return None
+        content = replies[0]
+        data = _json(content)
+        if isinstance(data, dict) and data.get("sections"):
+            return data
+        last = {"err": "输出不是合法 JSON" if data is None else "JSON 缺少 sections 字段",
+                "head": str(content)[:80].replace(chr(10), " ")}
+        log.warning("author 输出不符合 JSON 契约（%s），带错误重试：%s", last["err"], last["head"])
+    return None
 
 
 def review_draft(title, markdown, draft, packet):

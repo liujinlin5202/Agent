@@ -154,6 +154,12 @@ def _pool_daily_materials() -> tuple[list[dict], list[dict]] | None:
     try:
         ps = PoolStore()
         cands = ps.top_candidates(limit=POOL_CANDIDATE_LIMIT)
+        # 知乎治理（2026-10-14）：知乎页在数据中心 IP 上永远 403（mirror.py 已证伪
+        # 搜镜像方案），全文管线里是结构性死候选，每轮白占合格名额——入口直接排除。
+        _n0 = len(cands)
+        cands = [c for c in cands if "zhihu.com" not in (c.get("url") or "")]
+        if len(cands) != _n0:
+            log.info("池模式取材：剔除知乎死候选 %d 条（403 面不可抓）", _n0 - len(cands))
         trending = ps.latest_trending(limit=settings.top_n)
         if not cands:
             log.info("池子无可用候选（空池/新库），回退即时抓取")
