@@ -14,6 +14,13 @@ import requests
 log = logging.getLogger("post-curator.writer")
 
 
+def _post(url: str, **kwargs):
+    """trust_env=False 的直连 POST（requests.post 不收 trust_env，必须走 Session）。"""
+    session = requests.Session()
+    session.trust_env = False
+    return session.post(url, **kwargs)
+
+
 def mark_featured(post_ids: list[int], base_url: str, token: str,
                   timeout: int = 15) -> tuple[bool, str]:
     """批量加精。返回 (ok, 说明)。幂等：Go 侧 WHERE is_high_quality<>1。"""
@@ -23,12 +30,11 @@ def mark_featured(post_ids: list[int], base_url: str, token: str,
         return False, "INTERNAL_TOKEN 未配置（fail-closed）"
     url = base_url.rstrip("/") + "/internal/featured"
     try:
-        resp = requests.post(
+        resp = _post(
             url,
             headers={"X-Internal-Token": token, "Content-Type": "application/json"},
             json={"post_ids": post_ids},
             timeout=timeout,
-            trust_env=False,
         )
     except requests.RequestException as e:
         log.warning("internal/featured 请求失败: %s", e)

@@ -20,6 +20,14 @@ log = logging.getLogger("post-curator.llm")
 BACKOFF_STEPS = (1, 4, 16)
 
 
+def _post(url: str, **kwargs):
+    """trust_env=False 的直连 POST（requests.post 不收 trust_env，必须走 Session；
+    开发机 Windows 系统代理会把 127.0.0.1/内网请求劫去 Clash，一律禁环境代理）。"""
+    session = requests.Session()
+    session.trust_env = False
+    return session.post(url, **kwargs)
+
+
 def chat(prompt: str, system: str | None, api_key: str, base_url: str,
          model: str, max_tokens: int = 512, timeout: int = 120,
          temperature: float = 0.2) -> str | None:
@@ -37,13 +45,12 @@ def chat(prompt: str, system: str | None, api_key: str, base_url: str,
     }
     url = base_url.rstrip("/") + "/chat/completions"
     try:
-        resp = requests.post(
+        resp = _post(
             url,
             headers={"Authorization": f"Bearer {api_key}",
                      "Content-Type": "application/json"},
             json=payload,
             timeout=timeout,
-            trust_env=False,
         )
         if resp.status_code != 200:
             log.warning("LLM HTTP %s: %s", resp.status_code, resp.text[:200])

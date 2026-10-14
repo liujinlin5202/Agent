@@ -29,7 +29,7 @@ class TestWriter(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("fail-closed", msg)
 
-    @mock.patch("app.writer.requests.post")
+    @mock.patch("app.writer._post")
     def test_success(self, post):
         post.return_value = FakeResp(200, {"code": 200, "data": {"marked": 2}, "msg": "ok"})
         ok, msg = writer.mark_featured([1, 2], "http://x:8080", "tok", timeout=7)
@@ -40,21 +40,21 @@ class TestWriter(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["X-Internal-Token"], "tok")
         self.assertEqual(kwargs["timeout"], 7)
 
-    @mock.patch("app.writer.requests.post")
+    @mock.patch("app.writer._post")
     def test_token_guard_403(self, post):
         post.return_value = FakeResp(403, None, text="forbidden")
         ok, msg = writer.mark_featured([1], "http://x", "bad")
         self.assertFalse(ok)
         self.assertIn("403", msg)
 
-    @mock.patch("app.writer.requests.post")
+    @mock.patch("app.writer._post")
     def test_business_fail(self, post):
         post.return_value = FakeResp(200, {"code": 400, "data": None, "msg": "参数缺失"})
         ok, msg = writer.mark_featured([1], "http://x", "tok")
         self.assertFalse(ok)
         self.assertIn("参数缺失", msg)
 
-    @mock.patch("app.writer.requests.post")
+    @mock.patch("app.writer._post")
     def test_network_error(self, post):
         import requests as _rq
         post.side_effect = _rq.ConnectionError("refused")

@@ -64,9 +64,13 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
             log.warning("帖子 %s 评论读取失败，按无评论评审: %s", p["post_id"], e)
             comments = []
         prompt = judge.build_user_prompt(p, comments, cfg.post_char_cap, cfg.comment_char_cap)
-        raw = chat_with_backoff(
-            prompt, judge.SYSTEM_PROMPT, cfg.llm_api_key, cfg.llm_base_url,
-            cfg.llm_model, max_tokens=cfg.llm_max_tokens, timeout=cfg.llm_timeout)
+        try:
+            raw = chat_with_backoff(
+                prompt, judge.SYSTEM_PROMPT, cfg.llm_api_key, cfg.llm_base_url,
+                cfg.llm_model, max_tokens=cfg.llm_max_tokens, timeout=cfg.llm_timeout)
+        except Exception as e:  # noqa: BLE001 评委缺席≠停刊：单帖异常按失败收敛
+            log.warning("帖子 %s 评审异常: %s", p["post_id"], e)
+            raw = None
         verdict = judge.parse_verdict(raw)
         if verdict is None and raw is None:
             llm_fail += 1
