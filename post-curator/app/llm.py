@@ -17,7 +17,8 @@ import requests
 
 log = logging.getLogger("post-curator.llm")
 
-BACKOFF_STEPS = (1, 4, 16)
+BACKOFF_STEPS = (2, 15, 60)   # 秒；上游 429 是分钟级突发窗（10-14 首跑实测 3×6s 全灭），
+                              # 1/4/16s 太薄烧不尽窗口——加厚到最长 ~77s/帖换存活率
 
 
 def _post(url: str, **kwargs):
