@@ -88,10 +88,10 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
             "featured": featured,
             "reason": reason,
         })
+        # 逐帖落盘：进程被杀（deadline/驱逐）已评部分不丢，冷却据此免重评
+        state.append_decisions(cfg.data_dir, [rows[-1]])
         if featured:
             featured_ids.append(p["post_id"])
-
-    state.append_decisions(cfg.data_dir, rows)
 
     if llm_fail and llm_fail == len(todo) and todo:
         log.error("LLM 通道全员失败（%d/%d），评审无效", llm_fail, len(todo))
@@ -104,9 +104,6 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
     else:
         ok, msg = writer.mark_featured(
             featured_ids, cfg.internal_base_url, cfg.internal_token, cfg.http_timeout)
-        for row in rows:
-            if row["post_id"] in featured_ids:
-                row["marked"] = ok
         if not ok:
             log.error("加精写通道失败: %s", msg)
             return 4
