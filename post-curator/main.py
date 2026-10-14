@@ -48,11 +48,17 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
 
     cooling = set() if force else state.recently_judged(cfg.data_dir, cfg.rejudge_hours)
     eligible = [p for p in candidates if p["post_id"] not in cooling]
-    todo = eligible[:limit] if limit and limit > 0 else eligible
-    todo = todo[:cfg.max_judge_per_run]
+    if full:
+        # 全量档：候选已由 SQL LIMIT(top_n) 按互动信号收口，不再吃 80 帖日常护栏
+        todo = eligible[:limit] if limit and limit > 0 else eligible
+        skipped_cap = 0
+    else:
+        base = eligible[:limit] if limit and limit > 0 else eligible
+        todo = base[:cfg.max_judge_per_run]
+        skipped_cap = len(base) - len(todo)
     log.info("mode=%s 候选 %d，冷却跳过 %d，上限截断 %d，本轮评审 %d",
              mode, len(candidates), len(candidates) - len(eligible),
-             len(eligible) - len(todo), len(todo))
+             skipped_cap, len(todo))
 
     rows: list[dict] = []
     featured_ids: list[int] = []
