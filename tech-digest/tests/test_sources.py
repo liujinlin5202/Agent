@@ -122,5 +122,22 @@ class TestSSPai(unittest.TestCase):
         self.assertEqual(clean_html("&amp; 转义"), "& 转义")
 
 
+class TestRegistryContract(unittest.TestCase):
+    """源注册声明表契约（2026-10-15）：默认清单 ⊆ 注册表，且每个声明可解析。"""
+
+    def test_default_sources_all_registered(self):
+        from app.config import settings
+        from app.sources import KNOWN_SOURCES
+        self.assertNotIn("zhihu-hot", settings.tech_digest_sources)
+        self.assertTrue(set(settings.tech_digest_sources) <= set(KNOWN_SOURCES))
+
+    def test_known_sources_resolvable(self):
+        import importlib
+        from app.sources import KNOWN_SOURCES
+        for name, (mod, fn) in KNOWN_SOURCES.items():
+            f = getattr(importlib.import_module(f"app.sources.{mod}"), fn)
+            self.assertTrue(callable(f), f"{name} -> {mod}.{fn}")
+
+
 if __name__ == "__main__":
     unittest.main()

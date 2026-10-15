@@ -38,6 +38,26 @@ def new_item(*, type_: str, title: str, url: str, source: str, author: str = "",
 # 每个源一个 fetch() -> (items, source_label, detail)；异常向上抛由调度层捕获
 FetchFn = Callable[[], tuple[list[dict], str, dict]]
 
+# 源注册声明表（2026-10-15 声明化：测试可断言完整性，fetch_all 惰性解析避免循环 import）
+KNOWN_SOURCES = {
+    "github-trending": ("github", "fetch"),
+    "hacker-news": ("hacker_news", "fetch"),
+    "sspai": ("sspai", "fetch"),
+    "zhihu-hot": ("zhihu_hot", "fetch"),   # 已下线（默认清单移除）；保留注册便于历史 env 回切
+    "devto": ("devto", "fetch"),
+    "wallstreetcn": ("wscn", "fetch"),
+    "ars-technica": ("feeds", "fetch_ars"),
+    "ieee-spectrum": ("feeds", "fetch_ieee"),
+    "freecodecamp": ("feeds", "fetch_fcc"),
+    "ruanyifeng": ("feeds", "fetch_ruanyifeng"),
+    "lobste-rs": ("feeds", "fetch_lobsters"),
+    "the-verge": ("feeds", "fetch_verge"),
+    "techcrunch": ("feeds", "fetch_techcrunch"),
+    "infoq": ("feeds", "fetch_infoq"),
+    "oschina": ("feeds", "fetch_oschina"),
+    "juejin": ("juejin", "fetch"),
+}
+
 
 def fetch_all(source_names: Sequence[str] | None = None) -> tuple[list[dict], dict]:
     """抓取所有启用的源。返回 (items, stats)。
@@ -46,21 +66,11 @@ def fetch_all(source_names: Sequence[str] | None = None) -> tuple[list[dict], di
     单源失败：该源 error 非 None + fetched=0，整体继续；
     全部源失败：抛 RuntimeError（调用方按 error 处理，不产出空报）。
     """
-    from app.sources import (devto, feeds, github, hacker_news, sspai,  # 延迟：注册表避免循环
-                             wscn, zhihu_hot)
+    import importlib
 
     registry: dict[str, FetchFn] = {
-        "github-trending": github.fetch,
-        "hacker-news": hacker_news.fetch,
-        "sspai": sspai.fetch,
-        "zhihu-hot": zhihu_hot.fetch,
-        "devto": devto.fetch,
-        "wallstreetcn": wscn.fetch,
-        "ars-technica": feeds.fetch_ars,
-        "ieee-spectrum": feeds.fetch_ieee,
-        "freecodecamp": feeds.fetch_fcc,
-        "ruanyifeng": feeds.fetch_ruanyifeng,
-    }
+        name: getattr(importlib.import_module(f"app.sources.{mod}"), fn)
+        for name, (mod, fn) in KNOWN_SOURCES.items()}
     names = list(source_names or settings.tech_digest_sources)
     log.info("sources: %s", ",".join(names))
     items: list[dict] = []
