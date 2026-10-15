@@ -451,7 +451,8 @@ def _save_daily_draft(day: str, result, decision: dict):
     return path
 
 
-def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
+def run_daily(force: bool, dry_run: bool = False, private: bool = False,
+              allow_skip: bool = False) -> int:
     store = Store()
     try:
         day = date.today().isoformat()
@@ -462,8 +463,9 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
         skip, reason = should_skip(settings.load_threshold)
         if skip and settings.check_load:
             store.log("daily", "skipped", {"detail": "load", "reason": reason})
-            # rc 契约（2026-10-15）：熔断=当天没发=契约破坏，rc≠0 让人决定补不补
-            return 1
+            # rc 契约（2026-10-15）：熔断=当天没发=契约破坏，rc≠0 让人决定补不补。
+            # 例外：dry-run 门禁（--allow-skip）只验代码路径，环境性负载不拒版本。
+            return 0 if (allow_skip and dry_run) else 1
         started = time.monotonic()
         news, trending, stats = [], [], {}
         dedup_info = {"removed": []}
@@ -510,7 +512,11 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
             })
             log.warning("daily %s: %s", status, decision.get("reasons", []))
             # rc 契约（2026-10-15）：skip_quality（含 no_qualified_candidates）也是
-            # 当天没发——旧版 rc=0 是 10-15 静默停发事故的假成功根源
+            # 当天没发——旧版 rc=0 是 10-15 静默停发事故的假成功根源。
+            # 例外（裁决 A 同日）：dry-run 门禁（--allow-skip）只验代码路径，
+            # 质量拒稿放行（rc=0）；代码故障（generation_error）仍拒。
+            if allow_skip and dry_run and status == "skip_quality":
+                return 0
             return 1
 
         # 独立检查通过后才允许正式文件、快照、期数、清理和发布。
@@ -712,6 +718,8 @@ def main() -> int:
                     help="渲染落盘但不发帖、不写库（ingest: 不落池）；token 校验到为止")
     ap.add_argument("--private", action="store_true",
                     help="发布为私密帖（仅自己可见；默认公开帖）")
+    ap.add_argument("--allow-skip", action="store_true",
+                    help="仅 dry-run 门禁语义：质量拒稿/负载跳过放行 rc=0（代码故障仍 rc=1）；真跑不受影响")
     args = ap.parse_args()
     setup_logging()
     try:
@@ -724,7 +732,7 @@ def main() -> int:
     if args.task == "ingest":
         rc = run_ingest(args.dry_run)
     elif args.task == "daily":
-        rc = run_daily(args.force, args.dry_run, args.private)
+        rc = run_daily(args.force, args.dry_run, args.private, args.allow_skip)
     elif args.task == "star":
         rc = run_star(args.force, args.dry_run, args.private)
     else:

@@ -97,7 +97,8 @@ class FakeStore:
         pass
 
 
-def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
+def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True,
+         allow_skip=False, load=(False, "")):
     """Run the new pipeline contract; all generation/publication dependencies are offline."""
     from tests.test_main_reader import ready_result
     tmp = Path(tmp)
@@ -116,7 +117,7 @@ def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
          patch("main._pool_daily_materials", return_value=None), \
          patch("main._mark_pool_consumed"), \
          patch("main._sample_views"), \
-         patch("main.should_skip", return_value=(False, "")), \
+         patch("main.should_skip", return_value=load), \
          patch("main.preference.load_preference", return_value=main.preference.Preference()), \
          patch("main.settings.sse_market_api_key", "offline-model" if has_ai else ""), \
          patch("main.settings.deepseek_api_key", ""), \
@@ -132,7 +133,7 @@ def _run(tmp, day="2026-09-17", items=None, dry=True, result=None, has_ai=True):
          patch("app.digest.render_repost", side_effect=AssertionError("legacy renderer forbidden")):
         fdate.today.return_value = date.fromisoformat(day)
         fdate.fromisoformat.side_effect = date.fromisoformat
-        rc = run_daily(force=True, dry_run=dry)
+        rc = run_daily(force=True, dry_run=dry, allow_skip=allow_skip)
     return rc, captured, store, tmp
 
 
@@ -566,6 +567,28 @@ class TestRcContract(unittest.TestCase):
              patch("app.publisher.publish_md", return_value=(None, None, "HTTP 500")):
             rc = run_daily(force=True, dry_run=False)
         self.assertEqual(rc, 1)
+
+    def test_allow_skip_tolerates_quality_skip_only_in_dryrun(self):
+        """门禁语义（2026-10-15 裁决 A）：dry-run 门禁只验代码路径——质量拒稿
+        （skip_quality/负载）放行，代码故障（generation_error）仍拒；真跑不受
+        该旗标影响（rc=1 + 死人开关照旧）。"""
+        import tempfile
+        from tests.test_main_reader import ready_result
+        tmp = tempfile.mkdtemp()
+        skip = ready_result()
+        skip.update(status="skip_quality", reasons=["no_qualified_candidates"])
+        err = ready_result()
+        err.update(status="generation_error", reasons=["author_unavailable"])
+        rc_skip, _, _, _ = _run(tmp, result=skip, dry=True, allow_skip=True)
+        self.assertEqual(rc_skip, 0)
+        rc_err, _, _, _ = _run(tmp, result=err, dry=True, allow_skip=True)
+        self.assertEqual(rc_err, 1)
+        rc_real, _, _, _ = _run(tmp, result=skip, dry=False, allow_skip=True)
+        self.assertEqual(rc_real, 1)   # 真跑不吃该旗标
+        rc_load, _, _, _ = _run(tmp, result=err, dry=True, allow_skip=True, load=(True, "load 9.9"))
+        self.assertEqual(rc_load, 0)   # 门禁也容忍环境性负载跳过
+        rc_load_real, _, _, _ = _run(tmp, result=err, dry=False, allow_skip=True, load=(True, "load 9.9"))
+        self.assertEqual(rc_load_real, 1)
 
 
 if __name__ == "__main__":
