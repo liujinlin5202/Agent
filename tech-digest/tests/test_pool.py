@@ -302,5 +302,41 @@ class TestCooldown(PoolTestBase):
         self.assertEqual(n, 0)
 
 
+class TestTopCandidatesQuota(PoolTestBase):
+    def test_per_source_quota(self):
+        # 12 条 HN + 4 条 sspai：单源配额 8 → HN 最多 8 条，sspai 不被挤掉。
+        # 标题须实质差异（D5 标题模糊去重 0.85 会剔相似标题）。
+        topics = [
+            "Redis 事件循环与管道延迟的实测分析",
+            "Kafka 分区再均衡的坑与修复路径",
+            "Postgres 查询计划器如何选择索引",
+            "gRPC 长连接在弱网下的重连策略",
+            "LLVM 寄存器分配的两代算法对比",
+            "WebGPU 着色器编译管线的坑",
+            "eBPF 观测内核锁竞争的实操",
+            "io_uring 与 epoll 的吞吐差距从哪来",
+            "ZGC 毫秒级停顿的着色指针原理",
+            "Arrow 列式内存布局对缓存命中率的影响",
+            "Torch 编译模式在推理侧的收益实测",
+            "Ray 分布式调度器的故障恢复设计",
+        ]
+        sspai_titles = [
+            "少数派深度：跨平台框架的渲染架构对比",
+            "从零实现一个终端复用器的心得",
+            "开发者如何做一次靠谱的技术选型",
+            "静态站点生成器的模板引擎评测",
+        ]
+        items = ([_news(t, source="hacker-news", points=1000 - i)
+                  for i, t in enumerate(topics)]
+                 + [_news(t, source="sspai") for t in sspai_titles])
+        self.store.upsert_news(items)
+        cands = self.store.top_candidates(limit=24)
+        by_src = {}
+        for c in cands:
+            by_src[c["source"]] = by_src.get(c["source"], 0) + 1
+        self.assertEqual(by_src.get("hacker-news"), 8)
+        self.assertEqual(by_src.get("sspai"), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,8 @@ SOURCE_WEIGHT = {
 }
 DEFAULT_SOURCE_WEIGHT = 5
 HEAT_DEFAULT = 50.0          # 无热度信号的源（订阅系）保底可见分
+# 单源配额（2026-10-15）：防单源霸榜挤掉其他源的合格名额（当日知乎死候选 13/24 实证）
+MAX_PER_SOURCE_CANDIDATES = 8
 
 POOL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS pool_items (
@@ -253,11 +255,15 @@ class PoolStore:
             score = r["heat"] + r["source_weight"] * 10 - age * 5
             scored.append((score, r))
         scored.sort(key=lambda p: -p[0])
-        out = []
+        out, per_src = [], defaultdict(int)
         for score, r in scored:
             it = json.loads(r["raw"])
             if excluded_candidate(it):
                 continue
+            src = it.get("source") or ""
+            if per_src[src] >= MAX_PER_SOURCE_CANDIDATES:
+                continue
+            per_src[src] += 1
             it["_pool_url"] = r["url"]
             it["_pool_id"] = r["id"]
             it["_pool_score"] = round(score, 1)
