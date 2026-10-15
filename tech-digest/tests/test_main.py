@@ -253,7 +253,7 @@ class TestGateWiring(unittest.TestCase):
             rc, _, store, _ = _run(tmp, result=result, dry=False)
             self.assertFalse((Path(tmp) / "2026-09-17-daily.md").exists())
             self.assertTrue(list((Path(tmp) / "drafts").glob("*.json")))
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)   # 质量拒稿=当天没发=契约失败（2026-10-15 rc 契约）
         self.assertEqual(store.saved, [])
 
     def test_changed_body_invalidates_prior_review(self):
@@ -272,7 +272,7 @@ class TestGateWiring(unittest.TestCase):
         result["status"] = "skip_quality"
         with tempfile.TemporaryDirectory() as tmp:
             rc, _, store, _ = _run(tmp, result=result, dry=False)
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)   # 生产者拒稿照旧不可越过；且 rc≠0（2026-10-15）
         self.assertEqual(store.saved, [])
         self.assertEqual(store.posted, {})
 
@@ -513,6 +513,59 @@ class TestThinPoolTopup(unittest.TestCase):
         live_urls = [u for u in urls if u.startswith("https://live.example/")]
         self.assertEqual(len(live_urls), 8)      # HN 桶 [:8]；pool 重复 URL 已去重
         self.assertEqual(len(urls), 11)
+
+
+class TestRcContract(unittest.TestCase):
+    """rc 契约（2026-10-15）：当天未发布即 rc=1（产品契约=每天一篇）。
+
+    豁免：dup（今日已发）、weekend 关、显式关/凭据缺失（运营态）、dry-run。
+    收掉的假成功：skip_quality rc=0（10-15 静默停发事故）、发帖两连败 rc=0
+    （INC-QD03 挂账）、负载熔断 rc=0。
+    """
+
+    def test_skip_quality_returns_nonzero(self):
+        import tempfile
+        from tests.test_main_reader import ready_result
+        tmp = tempfile.mkdtemp()
+        result = ready_result()
+        result.update(status="skip_quality", reasons=["no_qualified_candidates"])
+        rc, _, store, _ = _run(tmp, result=result)
+        self.assertEqual(rc, 1)
+
+    def test_load_skip_returns_nonzero(self):
+        store = FakeStore()
+        with patch("main.Store", return_value=store), \
+             patch("main.should_skip", return_value=(True, "load 9.9")):
+            rc = run_daily(force=True, dry_run=False)
+        self.assertEqual(rc, 1)
+
+    def test_publish_failure_returns_nonzero(self):
+        import tempfile
+        from tests.test_main_reader import ready_result
+        tmp = tempfile.mkdtemp()
+        result = ready_result()
+        store = FakeStore()
+        raw = [result["item"]]
+
+        def pipeline(candidates, preference=None, pool=None, dry_run=False, recent_titles=None):
+            return result
+
+        with patch("main.Store", return_value=store), \
+             patch("main.fetch_all", return_value=(raw, {})), \
+             patch("main._pool_daily_materials", return_value=None), \
+             patch("main._mark_pool_consumed"), patch("main._sample_views"), \
+             patch("main.should_skip", return_value=(False, "")), \
+             patch("main.preference.load_preference", return_value=main.preference.Preference()), \
+             patch("main.settings.output_dir", Path(tmp)), \
+             patch("main.settings.data_dir", Path(tmp)), \
+             patch("main.settings.market_refresh_token", "tok"), \
+             patch("main.settings.market_user_telephone", "13800000000"), \
+             patch("main.settings.publish_weekend", True), \
+             patch("main.editorial.run_pipeline", side_effect=pipeline), \
+             patch("app.publisher.refresh_access_token", return_value=("a", "b")), \
+             patch("app.publisher.publish_md", return_value=(None, None, "HTTP 500")):
+            rc = run_daily(force=True, dry_run=False)
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

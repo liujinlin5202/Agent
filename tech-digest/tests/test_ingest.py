@@ -142,7 +142,8 @@ class TestDailyPoolMode(IngestTestBase):
              patch("main.should_skip", return_value=(False, "")), \
              patch("main.Store") as fake_store, \
              patch("main.editorial.run_pipeline", return_value=result), \
-             patch("main._publish_md", return_value=True), \
+             patch("main._publish_md", return_value="published"), \
+             patch("main.fetch_all", return_value=([], {})), \
              patch("main._sample_views"), \
              patch("main.settings.output_dir", self.datadir), \
              patch("main.date") as fdate, \

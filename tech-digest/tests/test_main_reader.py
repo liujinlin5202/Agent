@@ -108,7 +108,8 @@ class TestDailyReaderIntegration(unittest.TestCase):
                     "sample": sample, "recent": recent, "forbidden": forbidden,
                     "pool": pool, "fetch": fetch, "gate": gate, "token": token}
 
-    def assert_blocked(self, result, expected_rc, *, material="pool"):
+    def assert_blocked(self, result, expected_rc, *, material="pool",
+                       expected_status="generation_error"):
         formal = self.output / f"{DAY}-daily.md"
         self.output.mkdir(exist_ok=True)
         formal.write_text("unchanged formal output", encoding="utf-8")
@@ -131,7 +132,7 @@ class TestDailyReaderIntegration(unittest.TestCase):
         drafts = list(set((self.data / "drafts").glob("*")) - prior_drafts)
         self.assertTrue(drafts)
         record = json.loads(next(p for p in drafts if p.suffix == ".json").read_text(encoding="utf-8"))
-        self.assertEqual(record["status"], "generation_error" if expected_rc else "skip_quality")
+        self.assertEqual(record["status"], expected_status)   # 2026-10-15 起两类拒稿都 rc=1
         return calls
 
     def test_low_score_claimed_ready_is_blocked_for_pool_and_live(self):
@@ -140,7 +141,8 @@ class TestDailyReaderIntegration(unittest.TestCase):
                 self.store = TrackedStore()
                 result = ready_result()
                 result["review"]["scores"]["depth"] = 6
-                calls = self.assert_blocked(result, 0, material=material)
+                calls = self.assert_blocked(result, 1, material=material,
+                                            expected_status="skip_quality")
                 self.assertEqual(calls["gate"].call_count, 1)
 
     def test_stale_title_or_body_is_blocked(self):
@@ -189,12 +191,13 @@ class TestDailyReaderIntegration(unittest.TestCase):
                 self.assert_blocked(result, 1)
 
     def test_producer_skip_and_failure_cannot_be_overridden_by_passing_gate(self):
-        for status, expected in (("skip_quality", 0), ("generation_error", 1)):
+        # 2026-10-15 rc 契约：skip_quality 与 generation_error 都是当天没发 → 都 rc=1
+        for status in ("skip_quality", "generation_error"):
             with self.subTest(status=status):
                 self.store = TrackedStore()
                 result = ready_result()
                 result.update(status=status, reasons=["producer_declined"])
-                calls = self.assert_blocked(result, expected)
+                calls = self.assert_blocked(result, 1, expected_status=status)
                 self.assertEqual(calls["gate"].call_count, 1)
 
     def test_pipeline_exception_has_no_legacy_fallback(self):
@@ -218,7 +221,8 @@ class TestDailyReaderIntegration(unittest.TestCase):
                 result = ready_result()
                 result["source_packet"]["issues"] = ["truncated"]
                 result["review"] = passing_review(result["title"], BODY, result["source_packet"])
-                self.assert_blocked(result, 0, material=material)
+                self.assert_blocked(result, 1, material=material,
+                                    expected_status="skip_quality")
 
     def test_live_collection_failure_does_not_run_pipeline_or_formal_effects(self):
         rc, calls = self.run_once(material="live", fetch_error=RuntimeError("offline collection failed"))
@@ -277,7 +281,7 @@ class TestDailyReaderIntegration(unittest.TestCase):
         result = ready_result()
         result["review"]["scores"]["depth"] = 6
         rc, calls = self.run_once(result, existing_store=store)
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)   # 质量拒稿=当天没发（2026-10-15 rc 契约）
         calls["publish"].assert_not_called()
         reopened = Store(Path(self.temp.name) / "fixture.db")
         try:
@@ -346,7 +350,7 @@ class TestPublishMetadataAndSampling(unittest.TestCase):
         before = datetime.now(timezone.utc)
         success, mock = self.publish(store, dry_run=False)
         after = datetime.now(timezone.utc)
-        self.assertIs(success, True)
+        self.assertEqual(success, "published")
         detail = next(d for task, status, d in store.logs if d.get("detail") == "published")
         stamp = datetime.fromisoformat(detail["published_at"])
         self.assertEqual(stamp.utcoffset().total_seconds(), 0)
@@ -363,14 +367,14 @@ class TestPublishMetadataAndSampling(unittest.TestCase):
         self.assertEqual(detail["source_hash"], "offline-source-hash")
         mock.assert_called_once_with("原样标题", BODY, private=False)
 
-    def test_duplicate_and_dry_run_return_false(self):
-        for posted, dry in ((True, False), (False, True)):
+    def test_duplicate_and_dry_run_return_skipped_results(self):
+        for posted, dry, expected in ((True, False, "dup"), (False, True, "dryrun")):
             with self.subTest(posted=posted, dry=dry):
                 store = TrackedStore()
                 if posted:
                     store.posted[DAY] = 123
                 success, mock = self.publish(store, dry_run=dry)
-                self.assertIs(success, False)
+                self.assertEqual(success, expected)
                 mock.assert_not_called()
                 self.assertFalse(any(d.get("detail") == "published" for _, _, d in store.logs))
 
@@ -444,7 +448,7 @@ class TestResolvedDailyPublication(unittest.TestCase):
             clock.now.side_effect = now
             success = main._publish_md(self.store, task, DAY, "原样标题", BODY,
                                        dry_run=False, content_meta=self.content_meta)
-        self.assertIs(success, True)
+        self.assertEqual(success, "published")   # 2026-10-15 起返回结果串而非布尔
         publisher.assert_called_once_with("原样标题", BODY, private=False)
         verify.assert_called_once_with(self.store, task, post_id, "原样标题")
         return lookup, visible

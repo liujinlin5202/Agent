@@ -306,27 +306,33 @@ def _verify_published(store: Store, task: str, post_id: int | None, title: str) 
 
 
 def _publish_md(store: Store, task: str, day: str, title: str, md: str,
-                dry_run: bool, private: bool = False, content_meta: dict | None = None) -> bool:
-    """只有本次新发布获成功确认才返回 True；跳过、预览及失败均为 False。"""
+                dry_run: bool, private: bool = False, content_meta: dict | None = None) -> str:
+    """返回 published|failed|weekend|dup|disabled|no_credentials|dryrun 之一。
+
+    rc 契约（2026-10-15）由调用方翻译：仅 failed 视为当日未发布的故障（rc=1）；
+    weekend/dup/disabled/no_credentials/dryrun 是运营态豁免（rc=0）。旧版发帖
+    两连败返回 False 而调用方照 rc=0 退出——INC-QD03 假成功的根子，此处以
+    结果串显式区分。
+    """
     if task == "daily" and not _publish_allowed(day):
         store.log(task, "skipped", {"detail": "weekend", "day": day})
         log.info("周末只抓取入库、不发帖（数据仍进周报池）：%s 跳过发帖", day)
-        return False
+        return "weekend"
     if not settings.daily_publish:
         store.log(task, "degraded",
                   {"detail": "publish", "reason": "TECH_DIGEST_DAILY_PUBLISH=0"})
         log.info("发帖已关闭（TECH_DIGEST_DAILY_PUBLISH=0），仅落盘")
-        return False
+        return "disabled"
     if not settings.market_refresh_token or not settings.market_user_telephone:
         store.log(task, "degraded",
                   {"detail": "publish", "reason": "未配置 MARKET_REFRESH_TOKEN/TELEPHONE"})
         log.warning("未配置发帖凭据，仅落盘")
-        return False
+        return "no_credentials"
     posted = store.is_daily_posted(day) if task == "daily" else store.is_star_posted(day)
     if posted:
         store.log(task, "skipped", {"detail": "publish_dup"})
         log.info("今日已发布过（meta 标记），--force 重跑不重发")
-        return False
+        return "dup"
     from app import publisher  # 延迟导入：所有跳过分支均无需发帖模块
     if dry_run:
         auth = publisher.refresh_access_token()
@@ -336,7 +342,7 @@ def _publish_md(store: Store, task: str, day: str, title: str, md: str,
         else:
             store.log(task, "degraded", {"detail": "publish", "reason": "dry_run_token_fail"})
             log.error("dry-run: token 校验失败")
-        return False
+        return "dryrun"
     for attempt in (1, 2):
         post_id, url, err = publisher.publish_md(title, md, private=private)
         if err is None:
@@ -374,11 +380,11 @@ def _publish_md(store: Store, task: str, day: str, title: str, md: str,
             if task == "daily":
                 # 原确认时间及内容哈希在回读前捕获，成功日志仅写一次。
                 store.log(task, "ok", detail)
-            return True
+            return "published"
         log.warning("%s 发帖第 %d 次失败: %s", task, attempt, err)
         if attempt == 2:
             store.log(task, "degraded", {"detail": "publish", "error": err})
-    return False
+    return "failed"
 
 
 def _sample_views(store: Store) -> None:
@@ -456,7 +462,8 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
         skip, reason = should_skip(settings.load_threshold)
         if skip and settings.check_load:
             store.log("daily", "skipped", {"detail": "load", "reason": reason})
-            return 0
+            # rc 契约（2026-10-15）：熔断=当天没发=契约破坏，rc≠0 让人决定补不补
+            return 1
         started = time.monotonic()
         news, trending, stats = [], [], {}
         dedup_info = {"removed": []}
@@ -502,7 +509,9 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
                 "attempts": result.get("attempts", []) if isinstance(result, dict) else [],
             })
             log.warning("daily %s: %s", status, decision.get("reasons", []))
-            return 1 if status == "generation_error" else 0
+            # rc 契约（2026-10-15）：skip_quality（含 no_qualified_candidates）也是
+            # 当天没发——旧版 rc=0 是 10-15 静默停发事故的假成功根源
+            return 1
 
         # 独立检查通过后才允许正式文件、快照、期数、清理和发布。
         # 不重选标题、不重渲染、不添加期数或其他正文：审核字符串原样提交。
@@ -527,16 +536,16 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
             "title": title, "dry_run": dry_run, "attempts": result.get("attempts", []),
             "elapsed_s": round(time.monotonic() - started, 1), **({"errors": src_errors} if src_errors else {}),
         })
-        published = _publish_md(store, "daily", day, title, md, dry_run, private,
-                                content_meta={"article_type": draft["article_type"],
-                                              "learning_question": draft["learning_question"],
-                                              "evidence_count": len(draft["evidence_ids"]),
-                                              "source_hash": source["source_hash"],
-                                              "draft_hash": review["draft_hash"]})
-        if published is True and not dry_run:
+        publish_result = _publish_md(store, "daily", day, title, md, dry_run, private,
+                                     content_meta={"article_type": draft["article_type"],
+                                                   "learning_question": draft["learning_question"],
+                                                   "evidence_count": len(draft["evidence_ids"]),
+                                                   "source_hash": source["source_hash"],
+                                                   "draft_hash": review["draft_hash"]})
+        if publish_result == "published" and not dry_run:
             _mark_pool_consumed(item, day)
         _sample_views(store)
-        return 0
+        return 1 if publish_result == "failed" else 0
     finally:
         store.close()
 
@@ -579,7 +588,7 @@ def run_star(force: bool, dry_run: bool = False, private: bool = False) -> int:
         if skip and settings.check_load:
             store.log("star", "skipped", {"detail": "load", "reason": reason})
             log.info("负载过高，跳过本次: %s", reason)
-            return 0
+            return 1
         t0 = time.monotonic()
         # 池模式（D7）：trending 池「最新一班」；空/池故障回退即时抓取
         trending = _pool_star_trending()
@@ -616,8 +625,8 @@ def run_star(force: bool, dry_run: bool = False, private: bool = False) -> int:
         })
         title = _star_title(day)
         log.info("star ok: trending=%d desc=%d -> %s", len(trending), len(desc_map), out)
-        _publish_md(store, "star", day, title, md, dry_run, private)
-        return 0
+        publish_result = _publish_md(store, "star", day, title, md, dry_run, private)
+        return 1 if publish_result == "failed" else 0
     finally:
         store.close()
 
@@ -637,7 +646,7 @@ def run_weekly(force: bool, dry_run: bool, private: bool = False) -> int:
         if skip and settings.check_load:
             store.log("weekly", "skipped", {"detail": "load", "reason": reason})
             log.info("负载过高，跳过本次: %s", reason)
-            return 0
+            return 1
         monday = week_monday(date.today())
         days = store.get_daily_since(monday)
         if not days:
@@ -687,6 +696,8 @@ def run_weekly(force: bool, dry_run: bool, private: bool = False) -> int:
             log.warning("发帖第 %d 次失败: %s", attempt, err)
             if attempt == 2:
                 store.log("weekly", "degraded", {"detail": "publish", "error": err})
+                store.cleanup()
+                return 1
         store.cleanup()
         return 0
     finally:
