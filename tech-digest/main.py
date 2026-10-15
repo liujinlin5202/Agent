@@ -76,6 +76,9 @@ def setup_logging() -> None:
 
 # 池模式日报初筛上限；研究和成稿预算由 editorial.TOP_N 控制。
 POOL_CANDIDATE_LIMIT = 24
+# 池模式保底线（2026-10-15）：去死源后健康候选低于此数时合并 live 抓取补齐。
+# 当日 11 条候选（知乎剔后）质检全灭的形态在此被兜住。
+POOL_MIN_CANDIDATES = 12
 
 # 反爬命中判定：fetcher 对 4xx 不重试，错误消息带状态码；命中即冷却该源 24h（D9）
 _COOLDOWN_CODES = ("403", "405")
@@ -463,6 +466,15 @@ def run_daily(force: bool, dry_run: bool = False, private: bool = False) -> int:
             pool_mode = material is not None
             if material is not None:
                 news, trending = material
+                if len(news) < POOL_MIN_CANDIDATES:
+                    topup_items, _ = fetch_all()
+                    live_news = [it for it in topup_items if it["type"] == "news"]
+                    seen = {normalize_url(c.get("url") or "") for c in news}
+                    added = [c for c in _daily_candidates(live_news)
+                             if normalize_url(c.get("url") or "") not in seen]
+                    log.info("池内候选 %d < 保底线 %d，live 补齐 +%d",
+                             len(news), POOL_MIN_CANDIDATES, len(added))
+                    news = news + added[:POOL_CANDIDATE_LIMIT - len(news)]
             else:
                 items, stats = fetch_all()
                 trending = [it for it in items if it["type"] == "trending"]

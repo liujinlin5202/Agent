@@ -467,5 +467,53 @@ class TestPublishVerify(unittest.TestCase):
         priv.assert_not_called()
 
 
+class TestThinPoolTopup(unittest.TestCase):
+    """薄池 live 补齐（2026-10-15）：去死源后健康候选 < 12 时合并即时抓取。"""
+
+    def _news(self, url):
+        return {"type": "news", "title": url, "url": url, "source": "sspai",
+                "author": "", "published_at": None,
+                "fetched_at": "2026-10-15T08:00:00", "summary": "摘要内容。",
+                "ai_summary": None, "confidence": None, "trending": None}
+
+    def test_thin_pool_merges_live_candidates(self):
+        import tempfile
+        from tests.test_main_reader import ready_result
+        tmp = tempfile.mkdtemp()
+        pool_cands = [self._news(f"https://pool.example/{i}") for i in range(3)]
+        live_news = ([self._news(f"https://pool.example/{i}") for i in range(3)]   # 与池重复
+                     + [dict(self._news(f"https://live.example/{i}"), source="hacker-news",
+                             points=100 - i) for i in range(10)])
+        captured = {}
+        store = FakeStore()
+        result = ready_result()
+
+        def pipeline(candidates, preference=None, pool=None, dry_run=False, recent_titles=None):
+            captured.update(candidates=candidates)
+            return result
+
+        with patch("main.Store", return_value=store), \
+             patch("main._pool_daily_materials", return_value=(pool_cands, [])), \
+             patch("main.fetch_all", return_value=(live_news, {})), \
+             patch("main._mark_pool_consumed"), patch("main._sample_views"), \
+             patch("main.should_skip", return_value=(False, "")), \
+             patch("main.preference.load_preference", return_value=main.preference.Preference()), \
+             patch("main.settings.sse_market_api_key", "offline-model"), \
+             patch("main.settings.deepseek_api_key", ""), \
+             patch("main.settings.output_dir", Path(tmp)), \
+             patch("main.settings.data_dir", Path(tmp)), \
+             patch("main.settings.market_refresh_token", ""), \
+             patch("main.settings.market_user_telephone", ""), \
+             patch("main.settings.publish_weekend", True), \
+             patch("main.editorial.run_pipeline", side_effect=pipeline):
+            rc = run_daily(force=True, dry_run=True)
+        self.assertEqual(rc, 0)
+        urls = [c["url"] for c in captured["candidates"]]
+        self.assertEqual(urls[:3], [f"https://pool.example/{i}" for i in range(3)])  # 池内候选排前
+        live_urls = [u for u in urls if u.startswith("https://live.example/")]
+        self.assertEqual(len(live_urls), 8)      # HN 桶 [:8]；pool 重复 URL 已去重
+        self.assertEqual(len(urls), 11)
+
+
 if __name__ == "__main__":
     unittest.main()
