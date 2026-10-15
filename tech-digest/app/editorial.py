@@ -369,8 +369,28 @@ def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_t
             _stage(pool, url, "attempts", entries, dry_run)
 
     try:
-        scores = judge_score(candidates, pool, preference, dry_run)
-        top = [it for it in candidates if _qualified(scores.get(_url(it), {}))]
+        # 可行性预检（2026-10-15）：编辑部烧 LLM 前先验源可抓。抓取结果进缓存，
+        # deep_research 阶段零重复抓取。全灭=取材层故障（rc≠0 快速失败），
+        # 预检通过后 judge 全拒才是内容判断（skip_quality）——两种语义必须分开。
+        viable, dead_count = [], 0
+        for it in candidates:
+            try:
+                art = extract.fetch_cached(it)
+            except Exception:
+                art = None
+            if isinstance(art, dict) and isinstance(art.get("text"), str) and art["text"].strip():
+                viable.append(it)
+            else:
+                dead_count += 1
+        if dead_count:
+            attempts.append({"stage": "viability", "status": "skip_quality",
+                             "reasons": ["source_unfetchable"], "dead": dead_count,
+                             "total": len(candidates)})
+        if not viable:
+            result.update(status="generation_error", reasons=["no_viable_candidates"])
+            return result
+        scores = judge_score(viable, pool, preference, dry_run)
+        top = [it for it in viable if _qualified(scores.get(_url(it), {}))]
         top.sort(key=lambda it: (-scores[_url(it)]["total"], scores[_url(it)].get("article_type") == "experiment"))
         top = top[:TOP_N]
         if not top:

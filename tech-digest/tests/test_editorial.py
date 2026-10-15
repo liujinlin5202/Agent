@@ -77,13 +77,16 @@ class TestAttemptTrail(unittest.TestCase):
         return json.loads(row["attempts"] or "[]") if row else []
 
     def test_research_skip_is_recorded_in_attempts(self):
+        # 2026-10-15 起空文本候选死于可行性预检（stage=viability）；research 阶段的
+        # 结构性拒稿用「有文本无 blocks」触发（missing_source_blocks），意图不变：
+        # research 跳过必须进 attempts 且落池。
         c = candidate()
-        result = self.run_pipeline([c], [[judge_reply([c])]], source={"text": ""})
-        self.assertEqual(result["status"], "generation_error")
+        result = self.run_pipeline([c], [[judge_reply([c])]], source={"text": "正文" * 20})
+        self.assertEqual(result["status"], "skip_quality")
         entry = next(a for a in result["attempts"] if a.get("stage") == "research")
         self.assertEqual(entry["url"], c["_pool_url"])
-        self.assertEqual(entry["status"], "generation_error")
-        self.assertIn("source_fetch_failed", entry["reasons"])
+        self.assertEqual(entry["status"], "skip_quality")
+        self.assertIn("missing_source_blocks", entry["reasons"])
         self.assertTrue(self.persisted(c["_pool_url"]))
 
     def test_validate_failure_attempt_carries_draft(self):
@@ -367,6 +370,56 @@ class TestResearchEditorial(unittest.TestCase):
         self.assertEqual(result["source_packet"]["url"], c[1]["url"])
         self.assertEqual(result["source_packet"]["author"], "第二篇作者")
         self.assertIn(c[1]["url"], result["markdown"])
+
+
+class TestViabilityGate(unittest.TestCase):
+    """可行性预检（2026-10-15）：编辑部烧 LLM 前先验源可抓。
+
+    全灭=取材层故障 → generation_error/no_viable_candidates 快速失败（rc≠0，
+    死人开关会报），而不是 judge 全拒的 skip_quality 静默吞掉（10-15 事故形态）。
+    """
+
+    def _pool(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        pool = PoolStore(Path(tmp.name) / "pool.db")
+        self.addCleanup(pool.close)   # LIFO：先关库再删目录（Windows 文件锁）
+        return pool
+
+    def test_all_unfetchable_fails_fast_without_llm(self):
+        cands = [candidate(i) for i in range(1, 3)]
+        with patch.object(editorial.extract, "fetch_with_mirror", return_value=None), \
+                patch.object(editorial.llmpool, "map_chat",
+                             side_effect=AssertionError("0 可行候选不得调用 LLM")):
+            result = editorial.run_pipeline(cands, pool=self._pool())
+        self.assertEqual(result["status"], "generation_error")
+        self.assertIn("no_viable_candidates", result["reasons"])
+        self.assertEqual(result["attempts"][0]["stage"], "viability")
+        self.assertEqual(result["attempts"][0]["dead"], 2)
+
+    def test_mixed_candidates_judge_sees_only_viable(self):
+        viable, dead = candidate(1), candidate(2)
+        prompts = []
+        batches = iter([json.dumps({"scores": [dict({"title": viable["title"]},
+            **dict.fromkeys(("utility", "depth", "credibility", "audience", "novelty"), 8),
+            article_type="mechanism", content_purpose="knowledge",
+            learning_question="q", prerequisites=[])]}),
+            research_reply(), author_reply(), review_reply()])
+
+        def map_by_stage(tasks):
+            prompts.append(tasks[0]["prompt"])
+            return [next(batches)]
+
+        with patch.object(editorial.extract, "fetch_with_mirror",
+                          side_effect=lambda it: None if it is dead else article_packet()[0]), \
+                patch.object(editorial.llmpool, "map_chat", side_effect=map_by_stage):
+            result = editorial.run_pipeline([viable, dead], pool=self._pool())
+        self.assertEqual(result["status"], "ready")
+        self.assertIn(viable["title"], prompts[0])
+        self.assertNotIn(dead["title"], prompts[0])
+        viability = next(a for a in result["attempts"] if a.get("stage") == "viability")
+        self.assertEqual(viability["dead"], 1)
+        self.assertEqual(viability["total"], 2)
 
 
 if __name__ == "__main__":
