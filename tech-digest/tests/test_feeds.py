@@ -91,5 +91,26 @@ class TestFetchFeed(unittest.TestCase):
                 feeds.fetch_feed("ars-technica", "https://x/feed", 10)
 
 
+class TestNewFeeds(unittest.TestCase):
+    """2026-10-15 五个新源：标签/URL/上限走查（解析逻辑由上方双格式用例覆盖）。"""
+
+    def test_new_feed_functions(self):
+        cases = [
+            (feeds.fetch_lobsters, "lobste-rs", feeds.LOBSTERS_URL),
+            (feeds.fetch_verge, "the-verge", feeds.VERGE_URL),
+            (feeds.fetch_techcrunch, "techcrunch", feeds.TECHCRUNCH_URL),
+            (feeds.fetch_infoq, "infoq", feeds.INFOQ_URL),
+            (feeds.fetch_oschina, "oschina", feeds.OSCHINA_URL),
+        ]
+        for fn, source, url in cases:
+            with self.subTest(source=source):
+                with patch.object(feeds, "http_get",
+                                  return_value=_FakeResp(RSS_FULL)) as m:
+                    items, label, _ = fn()
+                self.assertEqual(label, source)
+                self.assertEqual(items[0]["source"], source)
+                self.assertEqual(m.call_args.args[0], url)
+
+
 if __name__ == "__main__":
     unittest.main()

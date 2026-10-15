@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""通用 RSS/Atom 源（2026-09-17 v4.1 加源）。
+"""通用 RSS/Atom 源（2026-09-17 v4.1 加源；2026-10-15 扩到九源）。
 
-覆盖 Ars Technica / IEEE Spectrum / freeCodeCamp / 阮一峰周刊，四源只差
+覆盖 Ars Technica / IEEE Spectrum / freeCodeCamp / 阮一峰周刊 /
+lobste.rs / The Verge / TechCrunch / InfoQ / OSCHINA，九源只差
 URL 和条数上限，解析共用：RSS2 <item> 与 Atom <entry> 双格式。
 summary 取 description/summary（缺席回退 content:encoded/content），剥 HTML
 截 300 字——feed 不承担全文，选中后走 extract.fetch_article 抓原文页。
 
-四源均无投票热度（编辑精选/期刊型），AI 挑选时按「来源权威性 + 时效」评估。
+订阅型源均无投票热度（编辑精选/期刊型），AI 挑选时按「来源权威性 + 时效」评估。
 """
 from __future__ import annotations
 
@@ -22,6 +23,12 @@ ARS_URL = "https://arstechnica.com/feed/"
 IEEE_URL = "https://spectrum.ieee.org/feeds/topic/computing.rss"
 FCC_URL = "https://www.freecodecamp.org/news/rss/"
 RUANYIFENG_URL = "https://www.ruanyifeng.com/blog/atom.xml"
+# 2026-10-15 新源（URL 均当日实测 200；solidot 本机直连+代理均 000 不加）
+LOBSTERS_URL = "https://lobste.rs/rss"
+VERGE_URL = "https://www.theverge.com/rss/index.xml"
+TECHCRUNCH_URL = "https://techcrunch.com/feed/"
+INFOQ_URL = "https://feed.infoq.com"
+OSCHINA_URL = "https://www.oschina.net/news/rss"
 
 _NS_CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
 _NS_DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
@@ -127,3 +134,23 @@ def fetch_fcc() -> tuple[list[dict], str, dict]:
 
 def fetch_ruanyifeng() -> tuple[list[dict], str, dict]:
     return fetch_feed("ruanyifeng", RUANYIFENG_URL, 5)
+
+
+def fetch_lobsters() -> tuple[list[dict], str, dict]:
+    return fetch_feed("lobste-rs", LOBSTERS_URL, 10)
+
+
+def fetch_verge() -> tuple[list[dict], str, dict]:
+    return fetch_feed("the-verge", VERGE_URL, 10)
+
+
+def fetch_techcrunch() -> tuple[list[dict], str, dict]:
+    return fetch_feed("techcrunch", TECHCRUNCH_URL, 10)
+
+
+def fetch_infoq() -> tuple[list[dict], str, dict]:
+    return fetch_feed("infoq", INFOQ_URL, 10)
+
+
+def fetch_oschina() -> tuple[list[dict], str, dict]:
+    return fetch_feed("oschina", OSCHINA_URL, 10)
