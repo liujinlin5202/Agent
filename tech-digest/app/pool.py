@@ -32,6 +32,10 @@ SOURCE_WEIGHT = {
     "zhihu-hot": 8, "hacker-news": 8, "devto": 8, "sspai": 8,
     "wallstreetcn": 6, "ars-technica": 6, "ieee-spectrum": 6,
     "freecodecamp": 6, "ruanyifeng": 6,
+    # 2026-10-15 新源：技术社区 7，业界媒体 6（规划见
+    # docs/superpowers/plans/2026-10-15-digest-resilience-sources.md）
+    "lobste-rs": 7, "juejin": 7,
+    "the-verge": 6, "techcrunch": 6, "infoq": 6, "oschina": 6,
 }
 DEFAULT_SOURCE_WEIGHT = 5
 HEAT_DEFAULT = 50.0          # 无热度信号的源（订阅系）保底可见分
@@ -73,7 +77,7 @@ def _heat_signal(it: dict) -> float | None:
     """源内热度信号（只用于排序，量纲无所谓）；None = 无信号 → 固定保底分。"""
     src = it.get("source") or ""
     t = it.get("trending") or {}
-    if src in ("hacker-news", "devto"):
+    if src in ("hacker-news", "devto", "juejin"):
         pts = it.get("points") or 0
         return float(pts) if pts else None
     if src == "zhihu-hot":
