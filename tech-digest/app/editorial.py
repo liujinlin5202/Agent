@@ -344,6 +344,10 @@ def review_draft(title, markdown, draft, packet):
 
 
 def run_pipeline(candidates, preference=None, pool=None, dry_run=False, recent_titles=None):
+    # 抓取缓存作用域=单次管线运行（入口即清）：同一次运行内预检→深读共享，
+    # 跨次运行必须重抓（同 URL 的源内容可能已变化，source_metadata_hash 缓存
+    # 失效测试依赖此语义）。
+    extract.clear_fetch_cache()
     own_pool = pool is None
     if own_pool:
         pool = PoolStore()

@@ -642,7 +642,8 @@ def fetch_with_mirror(item: dict) -> dict | None:
 
 
 # 运行内抓取缓存（2026-10-15）：可行性预检先抓一遍，deep_research 命中缓存
-# 零重复抓取；None 也缓存（同运行内死候选不重复烧超时）。进程即单次任务，无失效问题。
+# 零重复抓取；None 也缓存（同运行内死候选不重复烧超时）。作用域=单次
+# run_pipeline（editorial 入口即清），跨次运行不共享——源内容可能已变。
 _FETCH_CACHE: dict[str, dict | None] = {}
 
 
