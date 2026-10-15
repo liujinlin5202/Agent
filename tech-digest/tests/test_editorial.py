@@ -214,9 +214,13 @@ class TestResearchEditorial(unittest.TestCase):
         c = [candidate()]
         notes = json.loads(research_reply())
         notes["evidence"] = []
-        result = self.run_pipeline(c, [[judge_reply(c)], [json.dumps(notes)]])
+        # 2026-10-15 契约重试：空证据会带错误回喂再试 2 轮（首轮+2=3 次调用），
+        # 三轮都不合格仍是 skip_quality，author 阶段零调用（意图不变）。
+        result = self.run_pipeline(c, [[judge_reply(c)], [json.dumps(notes)],
+                                       [json.dumps(notes)], [json.dumps(notes)]])
         self.assertEqual(result["status"], "skip_quality")
         self.assertIsNone(result["draft"])
+        self.assertEqual(len([a for a in result["attempts"] if a.get("stage") == "author"]), 0)
 
     def test_archived_full_source_is_not_duplicated_into_author_prompt(self):
         c = [candidate()]
@@ -420,6 +424,89 @@ class TestViabilityGate(unittest.TestCase):
         viability = next(a for a in result["attempts"] if a.get("stage") == "viability")
         self.assertEqual(viability["dead"], 1)
         self.assertEqual(viability["total"], 2)
+
+
+class TestRetryContract(unittest.TestCase):
+    """契约重试（2026-10-15 用户裁决「先要能跑通」）：研究坏 JSON/证据绑不进原文块、
+    终审坏 JSON、judge 标题失配——全部按 author 已验证的「带错误回喂」模式重试。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.pool = PoolStore(Path(self.tmp.name) / "pool.db")
+        self.addCleanup(self.pool.close)   # LIFO：先关库再删目录（Windows 文件锁）
+        self.key = patch.object(editorial.settings, "sse_market_api_key", "offline-test-key")
+        self.key.start()
+        self.addCleanup(self.key.stop)
+
+    def run_ready(self, c, batches):
+        with patch.object(editorial.llmpool, "map_chat", side_effect=batches), \
+                patch.object(editorial.extract, "fetch_with_mirror", return_value=article_packet()[0]):
+            return editorial.run_pipeline([c], pool=self.pool)
+
+    def test_research_retries_on_bad_json(self):
+        c = candidate()
+        result = self.run_ready(c, [[judge_reply([c])], ["这不是JSON"], [research_reply()],
+                                    [author_reply()], [review_reply()]])
+        self.assertEqual(result["status"], "ready")
+
+    def test_research_retry_feeds_back_evidence_contract(self):
+        c = candidate()
+        bad = json.loads(research_reply())
+        bad["evidence"] = [{"id": "e1", "block_id": "nope", "statement": "x", "quote": ""}]
+        prompts = []
+        replies = iter([[judge_reply([c])], [json.dumps(bad)], [research_reply()],
+                        [author_reply()], [review_reply()]])
+
+        def map_by_call(tasks):
+            prompts.append(tasks[0]["prompt"])
+            return next(replies)
+
+        with patch.object(editorial.llmpool, "map_chat", side_effect=map_by_call), \
+                patch.object(editorial.extract, "fetch_with_mirror", return_value=article_packet()[0]):
+            result = editorial.run_pipeline([c], pool=self.pool)
+        self.assertEqual(result["status"], "ready")
+        self.assertIn("证据契约不合格", prompts[2])   # 第 3 次调用=研究重试（judge→首轮→重试），带错误回喂
+
+    def test_review_retries_on_bad_json(self):
+        c = candidate()
+        result = self.run_ready(c, [[judge_reply([c])], [research_reply()], [author_reply()],
+                                    ["评审输出不是JSON"], [review_reply()]])
+        self.assertEqual(result["status"], "ready")
+
+    def test_judge_matches_normalized_titles(self):
+        c = candidate()   # 原题「缓存机制研究1」
+        judge = json.dumps({"scores": [dict({"title": "缓存机制「研究」1"},
+            **dict.fromkeys(("utility", "depth", "credibility", "audience", "novelty"), 8),
+            article_type="mechanism", content_purpose="knowledge",
+            learning_question="q", prerequisites=[])]})
+        result = self.run_ready(c, [[judge], [research_reply()], [author_reply()], [review_reply()]])
+        self.assertEqual(result["status"], "ready")   # 引号被改写仍命中评分
+
+    def test_judge_retries_unscored_batch(self):
+        c1, c2 = candidate(1), candidate(2)
+
+        def judge_for(title, score):
+            return json.dumps({"scores": [dict({"title": title},
+                **dict.fromkeys(("utility", "depth", "credibility", "audience", "novelty"), score),
+                article_type="mechanism", content_purpose="knowledge",
+                learning_question="q", prerequisites=[])]})
+
+        calls = []
+        replies = iter([[judge_for(c1["title"], 8)], [judge_for(c2["title"], 3)],
+                        [research_reply()], [author_reply()], [review_reply()]])
+
+        def map_by_call(tasks):
+            calls.append(tasks[0]["prompt"])
+            return next(replies)
+
+        with patch.object(editorial.llmpool, "map_chat", side_effect=map_by_call), \
+                patch.object(editorial.extract, "fetch_with_mirror", return_value=article_packet()[0]):
+            result = editorial.run_pipeline([c1, c2], pool=self.pool)
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(len(calls), 5)       # judge 2 次（重试）+研究+作者+终审
+        self.assertIn("未获评分", calls[1])    # 第二次 judge 带错误回喂
+        self.assertEqual(result["item"]["title"], c1["title"])   # 低分的 c2 不进深读
 
 
 if __name__ == "__main__":

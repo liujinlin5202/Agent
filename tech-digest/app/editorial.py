@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from copy import deepcopy
 from datetime import date
 from urllib.parse import urlsplit, urlunsplit
@@ -34,6 +35,11 @@ SYSTEM_PROMPT = (
 
 def _today():
     return date.today().isoformat()
+
+
+def _norm_title(t):
+    """judge 标题匹配容错：qwen 实测会改写中文引号/空白（掘金系标题失配→零评分）。"""
+    return re.sub(r"[\s“”\"‘’「」『』]+", "", str(t or ""))
 
 
 def _json(content):
@@ -98,7 +104,7 @@ def judge_score(candidates, pool=None, preference=None, dry_run=False):
     for offset in range(0, len(todo), JUDGE_BATCH):
         batch = todo[offset:offset + JUDGE_BATCH]
         prefer = getattr(preference, "text", "") if getattr(preference, "active", False) else ""
-        prompt = (
+        base_prompt = (
             "逐条做初筛，标题必须逐字匹配。摘要只能判断候选价值，不能证明全文质量。\n"
             "utility=能带走的知识，depth=问题/方法/推理深度，credibility=来源及证据，"
             "audience=学生理解收益，novelty=新颖性。各维0到10，必须JSON数字。"
@@ -113,27 +119,39 @@ def judge_score(candidates, pool=None, preference=None, dry_run=False):
             '"learning_question":"问题","prerequisites":[]}]}\n'
             f"编辑偏好（不降低门槛）：{prefer}\n材料：" + json.dumps(batch, ensure_ascii=False)
         )
-        reply = llmpool.map_chat([{"prompt": prompt, "system": SYSTEM_PROMPT, "max_tokens": 3000}])
-        data = _json(reply[0]) if reply else None
-        if not data or not isinstance(data.get("scores"), list):
-            continue
-        by_title = {it.get("title"): it for it in batch}
-        for score in data["scores"]:
-            if not isinstance(score, dict) or not isinstance(score.get("title"), str):
+        # 标题容错匹配 + 未评分项带错误重试一次（2026-10-15）：qwen 实测会改写
+        # 中文引号（掘金系标题失配→零评分记录），坏 JSON 也会整批静默丢。
+        for attempt in range(2):
+            ask = base_prompt
+            if attempt:
+                missing = [str(it.get("title") or "") for it in batch if _url(it) not in out]
+                if not missing:
+                    break
+                ask = (base_prompt + "\n\n【上次输出不合格：以下条目未获评分或标题对不上，"
+                       "标题必须逐字复制材料里的 title 原文（含引号等标点，不要改写），"
+                       "只输出这些条目的 scores：" + json.dumps(missing, ensure_ascii=False) + "】")
+                log.warning("judge 批次 %d 条未获评分，带错误重试", len(missing))
+            reply = llmpool.map_chat([{"prompt": ask, "system": SYSTEM_PROMPT, "max_tokens": 3000}])
+            data = _json(reply[0]) if reply else None
+            if not data or not isinstance(data.get("scores"), list):
                 continue
-            item = by_title.get(score["title"])
-            if item is None:
-                continue
-            dims = {k: score.get(k) for k in _DIMS}
-            try:
-                total = weighted_score(dims) / 10
-            except ValueError:
-                continue
-            row = {**score, "kind": "judge", "date": _today(), "rubric_version": RUBRIC_VERSION,
-                   "candidate_hash": _candidate_hash(item), "dims": dims, "total": total}
-            out[_url(item)] = row
-            _stage(pool, _url(item), "score", total, dry_run)
-            _stage(pool, _url(item), "score_detail", row, dry_run)
+            by_title = {_norm_title(it.get("title")): it for it in batch}
+            for score in data["scores"]:
+                if not isinstance(score, dict) or not isinstance(score.get("title"), str):
+                    continue
+                item = by_title.get(_norm_title(score["title"]))
+                if item is None:
+                    continue
+                dims = {k: score.get(k) for k in _DIMS}
+                try:
+                    total = weighted_score(dims) / 10
+                except ValueError:
+                    continue
+                row = {**score, "kind": "judge", "date": _today(), "rubric_version": RUBRIC_VERSION,
+                       "candidate_hash": _candidate_hash(item), "dims": dims, "total": total}
+                out[_url(item)] = row
+                _stage(pool, _url(item), "score", total, dry_run)
+                _stage(pool, _url(item), "score_detail", row, dry_run)
     return out
 
 
@@ -178,6 +196,22 @@ def _original_url(value, packet):
     return value
 
 
+def _research_prompt(item, url, view, omitted):
+    return (
+        "阅读结构化来源，输出研究笔记。判断是否有足够方法与支持材料；只有摘要必须false。"
+        "理论文章用假设/推导/证明，系统文章用测量/架构约束，不能强制编造实验。"
+        "is_secondary表示是否主要转述别人的论文；如是，提供original_paper_url以便读原论文。"
+        "evidence必须引用真实block_id，quote若存在必须逐字来自该块。"
+        "缺失的关键图表、证明、方法或结果要让source_complete=false。被省略块不能充当证据。\n"
+        '{"article_type":"research","content_purpose":"knowledge","evidence_kind":"empirical|theoretical|engineering_measurement",'
+        '"source_complete":true,"is_secondary":false,"original_paper_url":null,'
+        '"research_checks":{"problem":"","method":"","support":"","conditions":"","limits":""},'
+        '"evidence":[{"id":"e1","block_id":"b1","statement":"","quote":""}],'
+        '"key_points":[],"learning_question":""}\n'
+        + json.dumps({"title": item.get("title"), "url": url, "omitted_block_ids": omitted, "blocks": view}, ensure_ascii=False)
+    )
+
+
 def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
     notes, packets, tasks, order = {}, {}, [], []
     for item in top:
@@ -208,27 +242,18 @@ def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
             continue
         view, omitted = _evidence_view(packet)
         packet["omitted_block_ids"] = omitted
-        prompt = (
-            "阅读结构化来源，输出研究笔记。判断是否有足够方法与支持材料；只有摘要必须false。"
-            "理论文章用假设/推导/证明，系统文章用测量/架构约束，不能强制编造实验。"
-            "is_secondary表示是否主要转述别人的论文；如是，提供original_paper_url以便读原论文。"
-            "evidence必须引用真实block_id，quote若存在必须逐字来自该块。"
-            "缺失的关键图表、证明、方法或结果要让source_complete=false。被省略块不能充当证据。\n"
-            '{"article_type":"research","content_purpose":"knowledge","evidence_kind":"empirical|theoretical|engineering_measurement",'
-            '"source_complete":true,"is_secondary":false,"original_paper_url":null,'
-            '"research_checks":{"problem":"","method":"","support":"","conditions":"","limits":""},'
-            '"evidence":[{"id":"e1","block_id":"b1","statement":"","quote":""}],'
-            '"key_points":[],"learning_question":""}\n'
-            + json.dumps({"title": item.get("title"), "url": url, "omitted_block_ids": omitted, "blocks": view}, ensure_ascii=False)
-        )
-        tasks.append({"prompt": prompt, "system": SYSTEM_PROMPT, "max_tokens": 4000})
+        tasks.append({"prompt": _research_prompt(item, url, view, omitted),
+                      "system": SYSTEM_PROMPT, "max_tokens": 4000})
         order.append(url)
-    replies = llmpool.map_chat(tasks) if tasks else []
-    for url, content in zip(order, replies):
+
+    def _research_pass(url, content):
+        """解析+校验一条研究笔记并落 stage；返回可重试失败的原因（None=通过或不可重试）。"""
         data = _json(content)
         if not data:
-            notes[url] = {"error": "generation_error", "reasons": ["research_unavailable"]}
-            continue
+            data = {"kind": "research", "error": "generation_error",
+                    "reasons": ["research_unavailable"]}
+            notes[url] = data
+            return "输出不是合法 JSON（必须只输出一个 JSON 对象，以 { 开头、以 } 结尾，禁止 Markdown 正文）"
         data.update(kind="research", date=_today(), rubric_version=RUBRIC_VERSION,
                     source_hash=packets[url]["source_hash"], source_url=url)
         packets[url].update(evidence=data.get("evidence"), evidence_kind=data.get("evidence_kind"))
@@ -253,6 +278,7 @@ def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
             data.update(error="skip_quality", reasons=["incomplete_or_excluded_source"])
         elif source_issues(packets[url]):
             data.update(error="skip_quality", reasons=source_issues(packets[url]))
+        feedback = None
         if not data.get("error"):
             checks, evidence = data.get("research_checks"), data.get("evidence")
             packet = packets[url]
@@ -267,10 +293,43 @@ def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
                 for e in (evidence or []))
             if not valid_checks or not valid_evidence:
                 data.update(error="skip_quality", reasons=["missing_or_unbound_research_evidence"])
+                feedback = ("研究笔记证据契约不合格：research_checks 五个字段（problem/method/"
+                            "support/conditions/limits）必须全为非空字符串；evidence 至少一条，"
+                            "每条的 block_id 必须逐字来自材料 blocks 里真实存在的 id，statement "
+                            "非空，quote 若有必须逐字复制对应块的 text 原文。")
         notes[url] = data
         data["source_metadata_hash"] = source_metadata_hash(packets[url])
         data["source_packet"] = deepcopy(packets[url])
         _stage(pool, url, "research", data, dry_run)
+        return feedback
+
+    replies = llmpool.map_chat(tasks) if tasks else []
+    pending = {}
+    for url, content in zip(order, replies):
+        fb = _research_pass(url, content)
+        if fb:
+            pending[url] = fb
+    # 契约重试（2026-10-15，用户裁决「先要能跑通」）：qwen 实测会产出坏 JSON 或把
+    # 证据绑不进原文块（当日 4/4 深读候选卡死实证）——与 author 同款带错误回喂，
+    # 最多再给 2 轮；内容性拒稿（incomplete/excluded 等）不重试。
+    for _ in range(2):
+        if not pending:
+            break
+        retry_tasks = []
+        for url, fb in pending.items():
+            item = next(it for it in top if _url(it) == url)
+            view, omitted = _evidence_view(packets[url])
+            retry_tasks.append({"prompt": _research_prompt(item, url, view, omitted)
+                                + "\n\n【上次输出不合格：" + fb + "】",
+                                "system": SYSTEM_PROMPT, "max_tokens": 4000})
+        log.warning("research 契约重试 %d 条（第 %d 轮）", len(retry_tasks), _ + 1)
+        replies = llmpool.map_chat(retry_tasks)
+        still = {}
+        for (url, _fb), content in zip(pending.items(), replies):
+            fb = _research_pass(url, content)
+            if fb:
+                still[url] = fb
+        pending = still
     for url in order:
         notes.setdefault(url, {"error": "generation_error", "reasons": ["research_unavailable"]})
     return notes, packets
@@ -334,8 +393,22 @@ def review_draft(title, markdown, draft, packet):
                       "source": {k: v for k, v in packet.items() if k not in {"text", "blocks"}},
                       "source_blocks": view, "omitted_block_ids": omitted}, ensure_ascii=False)
     )
-    replies = llmpool.map_chat([{"prompt": prompt, "system": SYSTEM_PROMPT, "max_tokens": 3000}])
-    review = _json(replies[0]) if replies else None
+    # 终审契约重试（2026-10-15）：qwen 偶发输出非 JSON——解析失败=generation_error
+    # 等于白烧全链，与 author/research 同款带错误回喂，最多 3 次调用。
+    review = None
+    last = None
+    for attempt in range(3):
+        ask = prompt if not last else (
+            prompt + "\n\n【上次输出不合格：" + last
+            + " 再次强调：只输出一个 JSON 对象（以 { 开头、以 } 结尾），"
+              "禁止输出 Markdown 正文或解释文字。】")
+        replies = llmpool.map_chat([{"prompt": ask, "system": SYSTEM_PROMPT, "max_tokens": 3000}])
+        review = _json(replies[0]) if replies else None
+        if isinstance(review, dict):
+            break
+        last = ("输出不是合法 JSON（你的上次输出开头："
+                + str(replies[0] if replies else "")[:60].replace(chr(10), " ") + "）")
+        log.warning("review 输出不符合 JSON 契约（第 %d 次），带错误重试", attempt + 1)
     if not review:
         return None
     review.update(source_url=packet["url"], source_hash=packet["source_hash"], rubric_version=RUBRIC_VERSION,
