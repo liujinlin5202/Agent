@@ -235,7 +235,9 @@ def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
             continue
         packets[url] = packet
         cached = _fresh(_row(pool, url).get("research"), "research")
-        if cached and cached.get("source_hash") == packet["source_hash"] and cached.get("source_url") == url \
+        # 缓存只复用成功产物——失败的 research 记录（error 置位）同日重跑必须
+        # 重烧（否则契约重试永远没机会执行，10-15 线上实证缓存把失败固化一天）。
+        if cached and not cached.get("error") and cached.get("source_hash") == packet["source_hash"] and cached.get("source_url") == url \
                 and cached.get("source_metadata_hash") == source_metadata_hash(packet):
             notes[url] = cached
             packet.update(evidence=cached.get("evidence"), evidence_kind=cached.get("evidence_kind"))

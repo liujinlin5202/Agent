@@ -440,9 +440,10 @@ class TestRetryContract(unittest.TestCase):
         self.addCleanup(self.key.stop)
 
     def run_ready(self, c, batches):
+        self.pool.upsert_news(c if isinstance(c, list) else [c])   # 生产路径候选来自池，stage 产物才能落
         with patch.object(editorial.llmpool, "map_chat", side_effect=batches), \
                 patch.object(editorial.extract, "fetch_with_mirror", return_value=article_packet()[0]):
-            return editorial.run_pipeline([c], pool=self.pool)
+            return editorial.run_pipeline(c if isinstance(c, list) else [c], pool=self.pool)
 
     def test_research_retries_on_bad_json(self):
         c = candidate()
@@ -482,6 +483,20 @@ class TestRetryContract(unittest.TestCase):
             learning_question="q", prerequisites=[])]})
         result = self.run_ready(c, [[judge], [research_reply()], [author_reply()], [review_reply()]])
         self.assertEqual(result["status"], "ready")   # 引号被改写仍命中评分
+
+    def test_failed_research_cache_is_not_reused_same_day(self):
+        # 2026-10-15 线上实证：失败的 research 记录（error 置位）被当日缓存复用，
+        # 契约重试永远没机会执行（165s 全缓存跑完）。缓存只认成功产物。
+        c = candidate()
+        notes = json.loads(research_reply())
+        notes["evidence"] = []
+        batches = [[judge_reply([c])], [json.dumps(notes)], [json.dumps(notes)],
+                   [json.dumps(notes)]]
+        first = self.run_ready(c, batches)
+        self.assertEqual(first["status"], "skip_quality")
+        # 第二次：judge 命中成功缓存，research 的失败缓存必须被绕过 → 重烧并成功
+        result = self.run_ready(c, [[research_reply()], [author_reply()], [review_reply()]])
+        self.assertEqual(result["status"], "ready")
 
     def test_judge_retries_unscored_batch(self):
         c1, c2 = candidate(1), candidate(2)
