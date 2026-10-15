@@ -105,6 +105,10 @@ class TestNewFeeds(unittest.TestCase):
             (feeds.fetch_cloudflare, "cloudflare", feeds.CLOUDFLARE_URL),
             (feeds.fetch_metaeng, "meta-eng", feeds.METAENG_URL),
             (feeds.fetch_meituan, "meituan-tech", feeds.MEITUAN_URL),
+            (feeds.fetch_nvidia, "nvidia-dev", feeds.NVIDIA_URL),
+            (feeds.fetch_nvidia_research, "nvidia-research", feeds.NVIDIA_R_URL),
+            (feeds.fetch_qwen, "qwen-blog", feeds.QWEN_URL),
+            (feeds.fetch_openai, "openai-news", feeds.OPENAI_URL),
         ]
         for fn, source, url in cases:
             with self.subTest(source=source):

@@ -36,6 +36,12 @@ NETFLIX_URL = "https://netflixtechblog.com/feed"
 CLOUDFLARE_URL = "https://blog.cloudflare.com/rss/"
 METAENG_URL = "https://engineering.fb.com/feed/"
 MEITUAN_URL = "https://tech.meituan.com/feed/"
+# 2026-10-15 三批：GPU/大模型厂商官方（URL 本机+服务器双端实测 200。Anthropic 无
+# RSS、Google Research 国内不可达、DeepSeek 仅 HTML 无标准 feed、HF 国内不可达）
+NVIDIA_URL = "https://developer.nvidia.com/blog/feed/"
+NVIDIA_R_URL = "https://research.nvidia.com/rss.xml"
+QWEN_URL = "https://qwenlm.github.io/blog/index.xml"
+OPENAI_URL = "https://openai.com/news/rss.xml"
 
 _NS_CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
 _NS_DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
@@ -177,3 +183,19 @@ def fetch_metaeng() -> tuple[list[dict], str, dict]:
 
 def fetch_meituan() -> tuple[list[dict], str, dict]:
     return fetch_feed("meituan-tech", MEITUAN_URL, 10)
+
+
+def fetch_nvidia() -> tuple[list[dict], str, dict]:
+    return fetch_feed("nvidia-dev", NVIDIA_URL, 10)
+
+
+def fetch_nvidia_research() -> tuple[list[dict], str, dict]:
+    return fetch_feed("nvidia-research", NVIDIA_R_URL, 10)
+
+
+def fetch_qwen() -> tuple[list[dict], str, dict]:
+    return fetch_feed("qwen-blog", QWEN_URL, 10)
+
+
+def fetch_openai() -> tuple[list[dict], str, dict]:
+    return fetch_feed("openai-news", OPENAI_URL, 10)

@@ -99,7 +99,8 @@ class Settings:
         "github-trending", "hacker-news", "sspai", "devto",
         "ars-technica", "ieee-spectrum", "freecodecamp", "ruanyifeng",
         "lobste-rs", "the-verge", "techcrunch", "infoq", "oschina", "juejin",
-        "netflix-tech", "cloudflare", "meta-eng", "meituan-tech"])
+        "netflix-tech", "cloudflare", "meta-eng", "meituan-tech",
+        "nvidia-dev", "nvidia-research", "qwen-blog", "openai-news"])
     daily_publish: bool = field(default_factory=lambda: _get_bool("TECH_DIGEST_DAILY_PUBLISH", True))
     # 周末发帖开关（2026-09-13 用户决策）：默认关 —— 周末照常抓取入库（喂周报），但不发帖。
     publish_weekend: bool = field(default_factory=lambda: _get_bool("TECH_DIGEST_WEEKEND_PUBLISH", False))
@@ -148,7 +149,8 @@ class Settings:
                 "github-trending,hacker-news,sspai,devto,"
                 "ars-technica,ieee-spectrum,freecodecamp,ruanyifeng,"
                 "lobste-rs,the-verge,techcrunch,infoq,oschina,juejin,"
-                "netflix-tech,cloudflare,meta-eng,meituan-tech").split(",") if s.strip()],
+                "netflix-tech,cloudflare,meta-eng,meituan-tech,"
+                "nvidia-dev,nvidia-research,qwen-blog,openai-news").split(",") if s.strip()],
             daily_publish=_get_bool("TECH_DIGEST_DAILY_PUBLISH", True),
             publish_weekend=_get_bool("TECH_DIGEST_WEEKEND_PUBLISH", False),
             daily_retain_days=int(os.environ.get("TECH_DIGEST_RETAIN_DAYS", "90")),

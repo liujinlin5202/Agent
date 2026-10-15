@@ -37,6 +37,7 @@ SOURCE_WEIGHT = {
     "lobste-rs": 7, "juejin": 7,
     "the-verge": 6, "techcrunch": 6, "infoq": 6, "oschina": 6,
     "netflix-tech": 8, "cloudflare": 8, "meta-eng": 8, "meituan-tech": 8,
+    "nvidia-dev": 8, "nvidia-research": 8, "qwen-blog": 8, "openai-news": 6,
 }
 DEFAULT_SOURCE_WEIGHT = 5
 HEAT_DEFAULT = 50.0          # 无热度信号的源（订阅系）保底可见分
@@ -45,7 +46,8 @@ MAX_PER_SOURCE_CANDIDATES = 6
 # 深度源保底（2026-10-15 基数重定）：订阅系/工程博客无投票热度，纯排名永远进
 # 不了 judge 视野（ars 66 条躺池实证）——每源保底 2 席，先于全局排名选取。
 DEPTH_SOURCES = {"ars-technica", "ieee-spectrum", "ruanyifeng",
-                 "netflix-tech", "cloudflare", "meta-eng", "meituan-tech"}
+                 "netflix-tech", "cloudflare", "meta-eng", "meituan-tech",
+                 "nvidia-dev", "nvidia-research", "qwen-blog"}
 DEPTH_FLOOR_PER_SOURCE = 2
 # 池内结构性死源（读取侧最终防线；知乎 403 面不可抓，治理留痕见知乎下线注记）
 DEAD_SOURCES = {"zhihu-hot"}

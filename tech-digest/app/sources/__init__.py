@@ -60,6 +60,10 @@ KNOWN_SOURCES = {
     "cloudflare": ("feeds", "fetch_cloudflare"),
     "meta-eng": ("feeds", "fetch_metaeng"),
     "meituan-tech": ("feeds", "fetch_meituan"),
+    "nvidia-dev": ("feeds", "fetch_nvidia"),
+    "nvidia-research": ("feeds", "fetch_nvidia_research"),
+    "qwen-blog": ("feeds", "fetch_qwen"),
+    "openai-news": ("feeds", "fetch_openai"),
 }
 
 
