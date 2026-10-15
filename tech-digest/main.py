@@ -75,10 +75,11 @@ def setup_logging() -> None:
 # ---------------- ingest（M1：高频抓取入池，零 LLM） ----------------
 
 # 池模式日报初筛上限；研究和成稿预算由 editorial.TOP_N 控制。
-POOL_CANDIDATE_LIMIT = 24
+# 2026-10-15 基数重定：24→32（源 10→19，judge 面扩大，成本只多一次批量调用）
+POOL_CANDIDATE_LIMIT = 32
 # 池模式保底线（2026-10-15）：去死源后健康候选低于此数时合并 live 抓取补齐。
-# 当日 11 条候选（知乎剔后）质检全灭的形态在此被兜住。
-POOL_MIN_CANDIDATES = 12
+# 当日 11 条候选（知乎剔后）质检全灭的形态在此被兜住；16=源扩容后的健康水位。
+POOL_MIN_CANDIDATES = 16
 
 # 反爬命中判定：fetcher 对 4xx 不重试，错误消息带状态码；命中即冷却该源 24h（D9）
 _COOLDOWN_CODES = ("403", "405")
@@ -157,8 +158,8 @@ def _pool_daily_materials() -> tuple[list[dict], list[dict]] | None:
     try:
         ps = PoolStore()
         cands = ps.top_candidates(limit=POOL_CANDIDATE_LIMIT)
-        # 知乎治理（2026-10-14）：知乎页在数据中心 IP 上永远 403（mirror.py 已证伪
-        # 搜镜像方案），全文管线里是结构性死候选，每轮白占合格名额——入口直接排除。
+        # 知乎治理（2026-10-14 读取侧 → 2026-10-15 池层 DEAD_SOURCES 前置剔除，
+        # 知乎不再占用配额席位）；此处留日志面。
         _n0 = len(cands)
         cands = [c for c in cands if "zhihu.com" not in (c.get("url") or "")]
         if len(cands) != _n0:

@@ -304,7 +304,7 @@ class TestCooldown(PoolTestBase):
 
 class TestTopCandidatesQuota(PoolTestBase):
     def test_per_source_quota(self):
-        # 12 条 HN + 4 条 sspai：单源配额 8 → HN 最多 8 条，sspai 不被挤掉。
+        # 12 条 HN + 4 条 sspai：单源配额 6 → HN 最多 6 条，sspai 不被挤掉。
         # 标题须实质差异（D5 标题模糊去重 0.85 会剔相似标题）。
         topics = [
             "Redis 事件循环与管道延迟的实测分析",
@@ -334,8 +334,51 @@ class TestTopCandidatesQuota(PoolTestBase):
         by_src = {}
         for c in cands:
             by_src[c["source"]] = by_src.get(c["source"], 0) + 1
-        self.assertEqual(by_src.get("hacker-news"), 8)
+        self.assertEqual(by_src.get("hacker-news"), 6)
         self.assertEqual(by_src.get("sspai"), 4)
+
+    def test_dead_sources_excluded_before_selection(self):
+        # 知乎死源在配额分配前剔除——不能先吃 8 席再被调用方过滤（10-15 实证）
+        items = ([_news(f"知乎热榜话题 {i}：一篇深度分析", source="zhihu-hot")
+                  for i in range(10)]
+                 + [_news("HN 上一篇机制分析长文", source="hacker-news", points=500)])
+        self.store.upsert_news(items)
+        cands = self.store.top_candidates(limit=24)
+        self.assertTrue(cands)
+        self.assertTrue(all("zhihu" not in (c.get("url") or "") for c in cands))
+        self.assertTrue(all(c["source"] != "zhihu-hot" for c in cands))
+
+    def test_depth_floor_guarantees_subscription_seats(self):
+        # 订阅系/工程博客无投票热度（heat=50 保底），纯排名会全被 HN 压掉；
+        # 深度源每源保底 2 席 → judge 每天都能看到 research 长文形态。
+        topics = [
+            "Hacker News 头条之一：某数据中心故障复盘",
+            "Hacker News 头条之二：某语言运行时剖析",
+            "Hacker News 头条之三：某数据库论文导读",
+            "Hacker News 头条之四：某浏览器引擎漫谈",
+            "Hacker News 头条之五：某编译器优化实测",
+            "Hacker News 头条之六：某分布式一致性证明",
+            "Hacker News 头条之七：某操作系统内核笔记",
+            "Hacker News 头条之八：某网络协议栈测量",
+            "Cloudflare 边缘网络上的机器学习推理实践",
+            "Cloudflare Workers 如何把冷启动压到毫秒级",
+            "Netflix 推荐系统的在线学习方法演进",
+            "Netflix 视频编码管线如何做 A/B 实验",
+        ]
+        items = ([_news(t, source="hacker-news", points=2000 - i)
+                  for i, t in enumerate(topics[:8])]
+                 + [_news(topics[8], source="cloudflare", points=0),
+                    _news(topics[9], source="cloudflare", points=0),
+                    _news(topics[10], source="netflix-tech", points=0),
+                    _news(topics[11], source="netflix-tech", points=0)])
+        self.store.upsert_news(items)
+        cands = self.store.top_candidates(limit=24)
+        by_src = {}
+        for c in cands:
+            by_src[c["source"]] = by_src.get(c["source"], 0) + 1
+        self.assertEqual(by_src.get("cloudflare"), 2)   # 保底 2 席
+        self.assertEqual(by_src.get("netflix-tech"), 2)
+        self.assertEqual(by_src.get("hacker-news"), 6)  # 配额封顶
 
 
 if __name__ == "__main__":

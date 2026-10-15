@@ -19,7 +19,8 @@ from app.reader_article import (ARTICLE_TYPES, FATAL_SOURCE_ISSUES, RUBRIC_VERSI
     SCHEMA_VERSION, draft_hash, public_url, publication_markdown_issues, source_hash, source_metadata_hash, source_issues, validate_draft)
 
 log = logging.getLogger("tech-digest.editorial")
-TOP_N = 3
+# 2026-10-15 基数重定：3→4——选材面扩大后多一次成稿机会；坏日多烧一轮 LLM。
+TOP_N = 4
 JUDGE_BATCH = 12
 _DIMS = ("novelty", "depth", "utility", "credibility", "audience")
 SYSTEM_PROMPT = (

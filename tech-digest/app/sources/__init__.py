@@ -56,6 +56,10 @@ KNOWN_SOURCES = {
     "infoq": ("feeds", "fetch_infoq"),
     "oschina": ("feeds", "fetch_oschina"),
     "juejin": ("juejin", "fetch"),
+    "netflix-tech": ("feeds", "fetch_netflix"),
+    "cloudflare": ("feeds", "fetch_cloudflare"),
+    "meta-eng": ("feeds", "fetch_metaeng"),
+    "meituan-tech": ("feeds", "fetch_meituan"),
 }
 
 

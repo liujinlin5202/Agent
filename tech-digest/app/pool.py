@@ -32,15 +32,23 @@ SOURCE_WEIGHT = {
     "zhihu-hot": 8, "hacker-news": 8, "devto": 8, "sspai": 8,
     "wallstreetcn": 6, "ars-technica": 6, "ieee-spectrum": 6,
     "freecodecamp": 6, "ruanyifeng": 6,
-    # 2026-10-15 新源：技术社区 7，业界媒体 6（规划见
+    # 2026-10-15 新源：技术社区 7，业界媒体 6，官方工程博客 8（规划见
     # docs/superpowers/plans/2026-10-15-digest-resilience-sources.md）
     "lobste-rs": 7, "juejin": 7,
     "the-verge": 6, "techcrunch": 6, "infoq": 6, "oschina": 6,
+    "netflix-tech": 8, "cloudflare": 8, "meta-eng": 8, "meituan-tech": 8,
 }
 DEFAULT_SOURCE_WEIGHT = 5
 HEAT_DEFAULT = 50.0          # 无热度信号的源（订阅系）保底可见分
 # 单源配额（2026-10-15）：防单源霸榜挤掉其他源的合格名额（当日知乎死候选 13/24 实证）
-MAX_PER_SOURCE_CANDIDATES = 8
+MAX_PER_SOURCE_CANDIDATES = 6
+# 深度源保底（2026-10-15 基数重定）：订阅系/工程博客无投票热度，纯排名永远进
+# 不了 judge 视野（ars 66 条躺池实证）——每源保底 2 席，先于全局排名选取。
+DEPTH_SOURCES = {"ars-technica", "ieee-spectrum", "ruanyifeng",
+                 "netflix-tech", "cloudflare", "meta-eng", "meituan-tech"}
+DEPTH_FLOOR_PER_SOURCE = 2
+# 池内结构性死源（读取侧最终防线；知乎 403 面不可抓，治理留痕见知乎下线注记）
+DEAD_SOURCES = {"zhihu-hot"}
 
 POOL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS pool_items (
@@ -237,8 +245,10 @@ class PoolStore:
 
     def top_candidates(self, limit: int = 24,
                        window_days: int | None = None) -> list[dict]:
-        """粗排 candidate（D4 公式），返回 v2 条目（附 _pool_url/_pool_id/_pool_score）。
+        """粗排 candidate（D4 公式 + 2026-10-15 两遍选取），返回 v2 条目。
 
+        选法：①死源/过期面在 SQL 层剔除；②深度源每源保底 2 席（无投票热度的
+        订阅系/工程博客靠纯排名进不了 judge 视野）；③全局排名补满，单源配额封顶。
         空池返回 []——调用方据此回退老路径，永不因池空停刊（D6）。
         """
         from app.daily_ai import excluded_candidate
@@ -246,9 +256,11 @@ class PoolStore:
             return []
         window = window_days or settings.pool_ttl_days
         cutoff = (datetime.now() - timedelta(days=window)).isoformat()
+        dead_ph = ",".join("?" for _ in DEAD_SOURCES)
         rows = self.conn.execute(
             "SELECT id, url, raw, heat, source_weight, first_seen FROM pool_items "
-            "WHERE kind='news' AND status='candidate' AND first_seen >= ?", (cutoff,)).fetchall()
+            f"WHERE kind='news' AND status='candidate' AND first_seen >= ? "
+            f"AND source NOT IN ({dead_ph})", (cutoff, *DEAD_SOURCES)).fetchall()
         now = datetime.now()
         scored = []
         for r in rows:
@@ -259,21 +271,40 @@ class PoolStore:
             score = r["heat"] + r["source_weight"] * 10 - age * 5
             scored.append((score, r))
         scored.sort(key=lambda p: -p[0])
-        out, per_src = [], defaultdict(int)
-        for score, r in scored:
+        out, per_src, picked = [], defaultdict(int), set()
+
+        def admit(score, r, it):
+            it["_pool_url"] = r["url"]
+            it["_pool_id"] = r["id"]
+            it["_pool_score"] = round(score, 1)
+            out.append(it)
+            picked.add(r["url"])
+            per_src[it.get("source") or ""] += 1
+
+        for score, r in scored:   # 深度源保底
+            if len(out) >= limit:
+                break
+            it = json.loads(r["raw"])
+            if excluded_candidate(it):
+                continue
+            src = it.get("source") or ""
+            if src in DEPTH_SOURCES and per_src[src] < DEPTH_FLOOR_PER_SOURCE:
+                admit(score, r, it)
+        for score, r in scored:   # 全局排名补满
+            if len(out) >= limit:
+                break
+            if r["url"] in picked:
+                continue
             it = json.loads(r["raw"])
             if excluded_candidate(it):
                 continue
             src = it.get("source") or ""
             if per_src[src] >= MAX_PER_SOURCE_CANDIDATES:
                 continue
-            per_src[src] += 1
-            it["_pool_url"] = r["url"]
-            it["_pool_id"] = r["id"]
-            it["_pool_score"] = round(score, 1)
-            out.append(it)
-            if len(out) >= limit:
-                break
+            admit(score, r, it)
+        # 保底影响「入选」，排名决定「排序」——输出按 rank 降序，下游 judge/深读
+        # 的次序语义与纯排名时代一致。
+        out.sort(key=lambda it: -it["_pool_score"])
         return out
 
     def latest_trending(self, limit: int = 15,

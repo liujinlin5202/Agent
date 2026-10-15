@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""通用 RSS/Atom 源（2026-09-17 v4.1 加源；2026-10-15 扩到九源）。
+"""通用 RSS/Atom 源（2026-09-17 v4.1 加源；2026-10-15 扩到十三源）。
 
 覆盖 Ars Technica / IEEE Spectrum / freeCodeCamp / 阮一峰周刊 /
-lobste.rs / The Verge / TechCrunch / InfoQ / OSCHINA，九源只差
+lobste.rs / The Verge / TechCrunch / InfoQ / OSCHINA /
+Netflix / Cloudflare / Meta / 美团技术团队，十三源只差
 URL 和条数上限，解析共用：RSS2 <item> 与 Atom <entry> 双格式。
 summary 取 description/summary（缺席回退 content:encoded/content），剥 HTML
 截 300 字——feed 不承担全文，选中后走 extract.fetch_article 抓原文页。
@@ -29,6 +30,12 @@ VERGE_URL = "https://www.theverge.com/rss/index.xml"
 TECHCRUNCH_URL = "https://techcrunch.com/feed/"
 INFOQ_URL = "https://feed.infoq.com"
 OSCHINA_URL = "https://www.oschina.net/news/rss"
+# 2026-10-15 二批：官方工程博客（research 长文密度最高的内容形态；URL 当日实测 200。
+# Uber/字节/腾讯/阿里无公开 RSS——公众号首发是业界常态，不硬凑聚合站）
+NETFLIX_URL = "https://netflixtechblog.com/feed"
+CLOUDFLARE_URL = "https://blog.cloudflare.com/rss/"
+METAENG_URL = "https://engineering.fb.com/feed/"
+MEITUAN_URL = "https://tech.meituan.com/feed/"
 
 _NS_CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
 _NS_DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
@@ -154,3 +161,19 @@ def fetch_infoq() -> tuple[list[dict], str, dict]:
 
 def fetch_oschina() -> tuple[list[dict], str, dict]:
     return fetch_feed("oschina", OSCHINA_URL, 10)
+
+
+def fetch_netflix() -> tuple[list[dict], str, dict]:
+    return fetch_feed("netflix-tech", NETFLIX_URL, 10)
+
+
+def fetch_cloudflare() -> tuple[list[dict], str, dict]:
+    return fetch_feed("cloudflare", CLOUDFLARE_URL, 10)
+
+
+def fetch_metaeng() -> tuple[list[dict], str, dict]:
+    return fetch_feed("meta-eng", METAENG_URL, 10)
+
+
+def fetch_meituan() -> tuple[list[dict], str, dict]:
+    return fetch_feed("meituan-tech", MEITUAN_URL, 10)

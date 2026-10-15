@@ -92,13 +92,14 @@ class Settings:
     load_threshold: float = 2.5
     check_load: bool = field(default_factory=lambda: _get_bool("TECH_DIGEST_CHECK_LOAD", True))
     http_timeout: int = 20
-    # ---- v2.0：多源（2026-10-15：知乎下线——数据中心 IP 永久 403；新增
-    # lobste-rs/the-verge/techcrunch/infoq/oschina/juejin，见
-    # docs/superpowers/plans/2026-10-15-digest-resilience-sources.md）----
+    # ---- v2.0：多源（2026-10-15：知乎下线——数据中心 IP 永久 403；见闻移出
+    # 默认——财经资讯编辑部天然不收；新增 10 源=社区/媒体/官方工程博客，
+    # 见 docs/superpowers/plans/2026-10-15-digest-resilience-sources.md）----
     tech_digest_sources: list[str] = field(default_factory=lambda: [
-        "github-trending", "hacker-news", "sspai", "devto", "wallstreetcn",
+        "github-trending", "hacker-news", "sspai", "devto",
         "ars-technica", "ieee-spectrum", "freecodecamp", "ruanyifeng",
-        "lobste-rs", "the-verge", "techcrunch", "infoq", "oschina", "juejin"])
+        "lobste-rs", "the-verge", "techcrunch", "infoq", "oschina", "juejin",
+        "netflix-tech", "cloudflare", "meta-eng", "meituan-tech"])
     daily_publish: bool = field(default_factory=lambda: _get_bool("TECH_DIGEST_DAILY_PUBLISH", True))
     # 周末发帖开关（2026-09-13 用户决策）：默认关 —— 周末照常抓取入库（喂周报），但不发帖。
     publish_weekend: bool = field(default_factory=lambda: _get_bool("TECH_DIGEST_WEEKEND_PUBLISH", False))
@@ -144,9 +145,10 @@ class Settings:
             http_timeout=int(os.environ.get("TECH_DIGEST_HTTP_TIMEOUT", "20")),
             tech_digest_sources=[s.strip() for s in os.environ.get(
                 "TECH_DIGEST_SOURCES",
-                "github-trending,hacker-news,sspai,devto,wallstreetcn,"
+                "github-trending,hacker-news,sspai,devto,"
                 "ars-technica,ieee-spectrum,freecodecamp,ruanyifeng,"
-                "lobste-rs,the-verge,techcrunch,infoq,oschina,juejin").split(",") if s.strip()],
+                "lobste-rs,the-verge,techcrunch,infoq,oschina,juejin,"
+                "netflix-tech,cloudflare,meta-eng,meituan-tech").split(",") if s.strip()],
             daily_publish=_get_bool("TECH_DIGEST_DAILY_PUBLISH", True),
             publish_weekend=_get_bool("TECH_DIGEST_WEEKEND_PUBLISH", False),
             daily_retain_days=int(os.environ.get("TECH_DIGEST_RETAIN_DAYS", "90")),
