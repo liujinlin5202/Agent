@@ -686,5 +686,47 @@ class TestReaderFetch(unittest.TestCase):
         self.assertIn("unsupported_content_type", r["issues"])
 
 
+class TestFetchCache(unittest.TestCase):
+    """运行内抓取缓存（2026-10-15）：预检与研究阶段共享，None 也缓存。"""
+
+    def setUp(self):
+        from app import extract
+        extract.clear_fetch_cache()
+
+    def test_same_url_fetched_once(self):
+        from app import extract
+        calls = []
+
+        def fake(item):
+            calls.append(item["url"])
+            return {"text": "正文" * 10}
+
+        with patch("app.extract.fetch_with_mirror", side_effect=fake):
+            a = extract.fetch_cached({"url": "https://x.com/a", "title": "t"})
+            b = extract.fetch_cached({"url": "https://x.com/a", "title": "t"})
+        self.assertEqual(calls, ["https://x.com/a"])
+        self.assertIs(a, b)
+
+    def test_pool_url_key_preferred(self):
+        from app import extract
+        calls = []
+
+        def fake(item):
+            calls.append(item.get("_pool_url") or item["url"])
+            return {"text": "正文"}
+
+        with patch("app.extract.fetch_with_mirror", side_effect=fake):
+            extract.fetch_cached({"url": "https://x.com/raw", "_pool_url": "https://x.com/norm"})
+            extract.fetch_cached({"url": "https://x.com/raw", "_pool_url": "https://x.com/norm"})
+        self.assertEqual(calls, ["https://x.com/norm"])
+
+    def test_failed_fetch_not_retried_within_run(self):
+        from app import extract
+        with patch("app.extract.fetch_with_mirror", return_value=None) as m:
+            extract.fetch_cached({"url": "https://x.com/f", "title": "t"})
+            extract.fetch_cached({"url": "https://x.com/f", "title": "t"})
+        self.assertEqual(m.call_count, 1)   # 同一运行内死候选不重复抓（None 也缓存）
+
+
 if __name__ == "__main__":
     unittest.main()

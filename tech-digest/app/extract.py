@@ -639,3 +639,21 @@ def fetch_with_mirror(item: dict) -> dict | None:
         except Exception as e:  # noqa: BLE001 镜像失败 → 交还调用方降级
             log.warning("镜像通道失败（%s）: %s", item.get("title"), e)
     return art
+
+
+# 运行内抓取缓存（2026-10-15）：可行性预检先抓一遍，deep_research 命中缓存
+# 零重复抓取；None 也缓存（同运行内死候选不重复烧超时）。进程即单次任务，无失效问题。
+_FETCH_CACHE: dict[str, dict | None] = {}
+
+
+def clear_fetch_cache() -> None:
+    _FETCH_CACHE.clear()
+
+
+def fetch_cached(item: dict) -> dict | None:
+    url = item.get("_pool_url") or item.get("url") or ""
+    if not url:
+        return fetch_with_mirror(item)
+    if url not in _FETCH_CACHE:
+        _FETCH_CACHE[url] = fetch_with_mirror(item)
+    return _FETCH_CACHE[url]

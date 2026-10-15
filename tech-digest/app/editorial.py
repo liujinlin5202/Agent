@@ -182,7 +182,7 @@ def deep_research(top, pool=None, dry_run=False, resolve_primary=True):
     for item in top:
         url = _url(item)
         try:
-            art = extract.fetch_with_mirror(item)
+            art = extract.fetch_cached(item)
         except Exception:
             art = None
         if not isinstance(art, dict) or not isinstance(art.get("text"), str) or not art["text"].strip():
