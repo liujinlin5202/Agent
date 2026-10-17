@@ -37,6 +37,19 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
     cfg = load_settings()
     mode = "full" if full else "daily"
 
+    # 开班自愈：先补历史欠账（写通道宕机窗口里判定过却没落库的帖，如 10-17 撞上
+    # 同学 MCP 部署停机窗）。幂等零成本；失败不拦本班评审——欠账留台账，明日再愈。
+    if not dry_run:
+        pending = state.pending_featured(cfg.data_dir)
+        if pending:
+            ok, msg = writer.mark_featured(
+                pending, cfg.internal_base_url, cfg.internal_token, cfg.http_timeout)
+            if ok:
+                state.mark_decisions(cfg.data_dir, set(pending), True)
+                log.info("开班自愈：历史欠账 %d 帖已补（%s）", len(pending), msg)
+            else:
+                log.warning("开班自愈失败（%s），欠账保留，本班继续", msg)
+
     try:
         if full:
             candidates = forumdb.fetch_all_unfeatured(cfg, cfg.full_top_n)
@@ -110,10 +123,13 @@ def run(full: bool, dry_run: bool, force: bool, limit: int | None) -> int:
     else:
         ok, msg = writer.mark_featured(
             featured_ids, cfg.internal_base_url, cfg.internal_token, cfg.http_timeout)
-        if not ok:
+        if ok:
+            state.mark_decisions(cfg.data_dir, set(featured_ids), True)
+            log.info("写通道: %s", msg)
+        else:
+            # 欠账留台账（逐帖落盘行无 marked），下一班开班自愈自动补
             log.error("加精写通道失败: %s", msg)
             return 4
-        log.info("写通道: %s", msg)
 
     judged = len(rows)
     log.info("post-curator summary: mode=%s candidates=%d judged=%d featured=%d marked=%s",

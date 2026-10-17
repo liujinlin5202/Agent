@@ -43,5 +43,36 @@ class TestState(unittest.TestCase):
         self.assertEqual(cooling, set())
 
 
+class TestPendingAndMark(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def _rows(self):
+        return [
+            {"ts": "2026-10-17T00:00:00+00:00", "post_id": 1, "featured": True},
+            {"ts": "2026-10-17T00:00:01+00:00", "post_id": 2, "featured": False},
+            {"ts": "2026-10-17T00:00:02+00:00", "post_id": 3, "featured": True, "marked": True},
+            {"ts": "2026-10-17T00:00:03+00:00", "post_id": 1, "featured": True},
+        ]
+
+    def test_pending_dedup_and_scope(self):
+        state.append_decisions(self.dir, self._rows())
+        # 1=featured 未标记（两行去重）、3=已标记不算欠账、2=未入选
+        self.assertEqual(state.pending_featured(self.dir), [1])
+
+    def test_mark_backfill_converges(self):
+        state.append_decisions(self.dir, self._rows())
+        self.assertEqual(state.mark_decisions(self.dir, {1}, True), 2)
+        self.assertEqual(state.pending_featured(self.dir), [])
+        # 重放幂等
+        self.assertEqual(state.mark_decisions(self.dir, {1}, True), 0)
+
+    def test_mark_leaves_nonfeatured_alone(self):
+        state.append_decisions(self.dir, self._rows())
+        state.mark_decisions(self.dir, {2}, True)
+        rows = state.load_decisions(self.dir)
+        self.assertIsNone(rows[1].get("marked"))
+
+
 if __name__ == "__main__":
     unittest.main()

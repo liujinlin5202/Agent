@@ -41,6 +41,17 @@ class TestWriter(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 7)
 
     @mock.patch("app.writer._post")
+    def test_chunk_over_500(self, post):
+        post.return_value = FakeResp(200, {"code": 200, "data": {"marked": 3}, "msg": "ok"})
+        ids = list(range(1200))
+        ok, msg = writer.mark_featured(ids, "http://x", "tok")
+        self.assertTrue(ok)
+        self.assertEqual(post.call_count, 3)  # 500+500+200
+        sizes = [len(post.call_args_list[i][1]["json"]["post_ids"]) for i in range(3)]
+        self.assertEqual(sizes, [500, 500, 200])
+        self.assertIn("9", msg)  # marked 合计=各批之和 3×3
+
+    @mock.patch("app.writer._post")
     def test_token_guard_403(self, post):
         post.return_value = FakeResp(403, None, text="forbidden")
         ok, msg = writer.mark_featured([1], "http://x", "bad")

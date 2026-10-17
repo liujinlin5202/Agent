@@ -63,3 +63,38 @@ def recently_judged(data_dir: Path, rejudge_hours: int,
         if ts >= cutoff:
             out.add(pid)
     return out
+
+
+def pending_featured(data_dir: Path) -> list[int]:
+    """台账里 featured=true 但 marked 未确认为 True 的 postID（去重升序）。
+
+    开班自愈的欠账来源。搭配 mark_decisions 用：成功落库即回填原行，
+    欠账集合收敛到真失败，不会随历史无界滚雪球。"""
+    ids = {int(r["post_id"]) for r in load_decisions(data_dir)
+           if r.get("featured") and r.get("marked") is not True}
+    return sorted(ids)
+
+
+def mark_decisions(data_dir: Path, post_ids: set[int], marked: bool) -> int:
+    """把指定 postID 的 featured 行回填落库结果（原行重写，tmp+rename 原子）。
+
+    台账本追加-only，但 marked 必须写回原行——只追加的话自愈会把已成功
+    的行当欠账反复空跑。单写方进程 + 平台 Forbid 并发，整文件重写安全。"""
+    path = decisions_path(data_dir)
+    rows = load_decisions(data_dir)
+    hit = 0
+    for r in rows:
+        try:
+            if r.get("featured") and r.get("marked") is not True \
+                    and int(r.get("post_id", -1)) in post_ids:
+                r["marked"] = marked
+                hit += 1
+        except (TypeError, ValueError):
+            continue
+    if hit:
+        tmp = path.with_suffix(".jsonl.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        tmp.replace(path)
+    return hit
