@@ -79,7 +79,7 @@ class Settings:
     content_threshold: float = 7.0    # 正文价值加精线
     comment_threshold: float = 7.0    # 评论区价值加精线（问询帖核心）
     max_judge_per_run: int = 80       # 单次评审上限（成本护栏）
-    full_top_n: int = 300             # 全量模式按互动信号预排后评审 top N
+    full_top_n: int = 600             # 全量模式按互动信号预排后评审 top N
     comments_per_post: int = 20       # 送审评论条数（按赞排序）
     post_char_cap: int = 4000         # 正文送审截断
     comment_char_cap: int = 500       # 单条评论送审截断

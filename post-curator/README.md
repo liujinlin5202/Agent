@@ -49,7 +49,7 @@ comment_value 0-10, reason}`；**加精与否在代码里判**——`not flame_b
 | `CURATOR_CONTENT_THRESHOLD` | 7.0 | 正文价值加精线 |
 | `CURATOR_COMMENT_THRESHOLD` | 7.0 | 评论区价值加精线（问询帖核心） |
 | `CURATOR_MAX_JUDGE` | 80 | 单次评审上限（成本护栏） |
-| `CURATOR_FULL_TOP_N` | 300 | 全量模式评审 top N |
+| `CURATOR_FULL_TOP_N` | 600 | 全量模式评审 top N |
 | `CURATOR_REJUDGE_HOURS` | 20 | 同帖评审冷却（3 天窗口内每日可复审一次） |
 
 ## 退出码
